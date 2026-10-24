@@ -167,3 +167,7 @@ isolated initially; a successful handshake does not validate configuration write
 The DTrac APK sends `AT+DEMO=ON/OFF\r\n` from its rotator UI, but the SHA-pinned RC-3040S 251217 firmware AT matcher does not contain these strings. Do not confuse that with `AT+TEST=`, which follows an echo/text-send path. The SDK's `DemoCruise` is explicitly **host-side**. See [APK-vs-firmware evidence](docs/reverse-engineering/RC3040S_stage8_APK_DEMO_compatibility.md).
 
 The UDP→TCP gateway now ties the recent-C2 motion prerequisite to both APP SID **and the originating UDP IP:port**. This reduces accidental cross-client control inheritance but is not cryptographic authentication. Restrict LAN exposure with firewall rules.
+
+### Stage 9: fixed-width network configuration
+
+Firmware AT parser `0x8B2C→0x8E76` reads four 3-digit decimal IPv4 octets. The SDK now has opt-in, bytes-only `SetIpAddress`, `SetGateway`, `SetSubnetMask` and `SetDns` constructors, emitting e.g. `AT+IP=192.168.001.050\\r`. These may irreversibly change reachable device configuration. [Evidence](docs/reverse-engineering/RC3040S_stage9_IPv4_encoding.md).

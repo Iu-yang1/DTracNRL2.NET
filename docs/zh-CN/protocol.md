@@ -119,3 +119,7 @@ WebSocket 发送成功不构成设备接受或机械响应的确认。准确的�
 ## 第七阶段纠正：AT+TEST= 不是确认的原生巡航
 
 固件调用链 `0x387D→0x8BEE→0x8A1F→0x58C9` 将 `AT+TEST=` 后缀作为 WebSocket 文本输出，较强支持这是回显诊断而非硬件 DEMO。SDK `DiagnosticEcho(text)` 只构造回显请求，原来的 `DemoCommandPrefix` 保留弃用别名。固件状态文字中可见 AZ/EL `%05u HZ` 和后续 `/s` 数值，新增 `Rc3040sDiagnosticParser` 可解析，但不将其解释为经测量的角速度或加速度。参见[第七阶段报告](../reverse-engineering/RC3040S_stage7_AT_echo_and_speed.md)。
+
+## 第九阶段：IP 地址命令采用固定三位八位组
+
+固件 `0x8B2C/0x8E76` 循环四次，以间隔 4 字节读取各三位十进制数字，`AT+IP`、`AT+GATEWAY`、`AT+MASK`、`AT+DNS` 均采用 `ddd.ddd.ddd.ddd`。SDK 增加仅构造字节的 `SetIpAddress`、`SetGateway`、`SetSubnetMask`、`SetDns`，不自动写入真实设备。参见[第九阶段报告](../reverse-engineering/RC3040S_stage9_IPv4_encoding.md)。

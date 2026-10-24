@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using DTrac.Nrl2.Rotator;
 using Xunit;
@@ -27,6 +28,22 @@ public sealed class FirmwareDiagnosticsTests
     [InlineData("AT+AZ_SPD=00300")]
     public void RejectsMalformedOrNonDiagnosticLines(string line) =>
         Assert.False(Rc3040sDiagnosticParser.TryParseSpeedLine(line, out _));
+
+    [Fact]
+    public void IPv4FirmwareConfigUsesFixedThreeDigitOctets()
+    {
+        var address = IPAddress.Parse("192.168.1.50");
+        Assert.Equal("AT+IP=192.168.001.050\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetIpAddress(address)));
+        Assert.Equal("AT+GATEWAY=192.168.001.050\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetGateway(address)));
+        Assert.Equal("AT+MASK=255.255.255.000\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetSubnetMask(IPAddress.Parse("255.255.255.0"))));
+        Assert.Equal("AT+DNS=008.008.008.008\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetDns(IPAddress.Parse("8.8.8.8"))));
+        Assert.Throws<ArgumentException>(() =>
+            Rc3040sFirmwareCommands.SetIpAddress(IPAddress.IPv6Loopback));
+    }
 
     [Fact]
     public void DiagnosticEchoHasNoCruiseSemantics()

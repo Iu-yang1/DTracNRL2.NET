@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace DTrac.Nrl2.Rotator;
@@ -23,6 +25,26 @@ public static class Rc3040sFirmwareCommands
         // This command may persist EEPROM. Do not transmit without an independently verified management frame.
         return Encoding.ASCII.GetBytes(FormattableString.Invariant($"AT+{axis}_SPD={rawValue:00000}\r"));
     }
+
+    /// <summary>
+    /// Firmware's 0x8B2C / 0x8E76 parser reads 4 exactly-3-decimal-digit octets at
+    /// offsets prefix.Length + {0,4,8,12}. This only constructs bytes. Sending the
+    /// command may persist the IP settings and disconnect the controller.
+    /// </summary>
+    private static byte[] Ipv4(string prefix, IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+            throw new ArgumentException("This firmware interface accepts IPv4 only.", nameof(address));
+        string encoded = string.Join(".", address.GetAddressBytes().Select(
+            part => part.ToString("D3", CultureInfo.InvariantCulture)));
+        return Encoding.ASCII.GetBytes(prefix + encoded + "\r");
+    }
+
+    public static byte[] SetIpAddress(IPAddress address) => Ipv4("AT+IP=", address);
+    public static byte[] SetGateway(IPAddress address) => Ipv4("AT+GATEWAY=", address);
+    public static byte[] SetSubnetMask(IPAddress address) => Ipv4("AT+MASK=", address);
+    public static byte[] SetDns(IPAddress address) => Ipv4("AT+DNS=", address);
 
     /// <summary>Firmware-recognized DHCP toggle; may persist configuration or disconnect the device.</summary>
     public static byte[] SetDhcp(bool enabled) =>
