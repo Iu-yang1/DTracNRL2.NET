@@ -157,3 +157,7 @@ replace with the board's actual LAN IP. Complete the test with motor power
 isolated initially; a successful handshake does not validate configuration writes.
 
 [Full firmware AT command recognition matrix and evidence status](docs/reverse-engineering/RC3040S_AT_command_matrix.md).
+
+### Native diagnostic clarification (stage 7)
+
+`AT+TEST=` is **not** proven to be a native motor cruise command. Firmware trace routes the suffix to a WebSocket text sender; the likely meaning is a test echo. `Rc3040sDiagnosticParser` parses reported AZ/EL raw Hz and a second uncalibrated /s field from firmware diagnostic lines. See [stage 7 evidence](docs/reverse-engineering/RC3040S_stage7_AT_echo_and_speed.md). These diagnostic fields are not calibrated mechanical acceleration readings.

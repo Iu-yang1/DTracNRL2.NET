@@ -47,8 +47,24 @@ public static class Rc3040sFirmwareCommands
     public static byte[] SelectAzimuthTravel(bool allow450Degrees) =>
         Encoding.ASCII.GetBytes(allow450Degrees ? "AT+P450\r" : "AT+P360\r");
 
-    /// <summary>Experimental firmware DEMO AT command; parameter semantics are unverified.</summary>
-    public static string DemoCommandPrefix => "AT+TEST=";
+    /// <summary>
+    /// Diagnostic echo command: handler 0x387D forwards the suffix at XDATA 0x0051
+    /// to the WebSocket text writer via 0x8BEE -> 0x8A1F -> 0x58C9.
+    /// This is NOT firmware cruise/DEMO.
+    /// </summary>
+    public const string DiagnosticEchoPrefix = "AT+TEST=";
+
+    /// <summary>Constructs a diagnostic echo payload only; never sends it.</summary>
+    public static byte[] DiagnosticEcho(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (text.Length is < 1 or > 48 || text.Any(c => c is < ' ' or > '~'))
+            throw new ArgumentException("Echo text must be 1..48 printable ASCII characters.", nameof(text));
+        return Encoding.ASCII.GetBytes(DiagnosticEchoPrefix + text + "\r");
+    }
+
+    [Obsolete("AT+TEST= is an echo/diagnostic operation, NOT a native DEMO cruise command. Use DiagnosticEchoPrefix.")]
+    public static string DemoCommandPrefix => DiagnosticEchoPrefix;
 
     /// <summary>Risky device reboot; never send without explicit user initiation.</summary>
     public static byte[] Restart() => "AT+RESET\r"u8.ToArray();
