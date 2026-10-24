@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.RegularExpressions;
 using DTrac.Nrl2.Protocol;
 using DTrac.Nrl2.Rotator;
@@ -49,6 +50,7 @@ public sealed class Rc3040sAtWritePermit
 
     public Rc3040sAtOperation Operation { get; }
     public string ExpectedFirmware { get; }
+    public ushort? RequestedRawSpeed { get; private init; }
 
     // Only for the diagnostic AT+TEST operation. It is an exact per-request
     // echoed text marker, not a generic acknowledgement for EEPROM writes.
@@ -67,7 +69,8 @@ public sealed class Rc3040sAtWritePermit
             : Rc3040sFirmwareCommands.SetElevationSpeed(rawValue);
         return new Rc3040sAtWritePermit(azimuth ? Rc3040sAtOperation.AzimuthSpeed
             : Rc3040sAtOperation.ElevationSpeed, command, expectedFirmware,
-            confirmPersistentSettingChange, confirmUnknownMechanicalEffect);
+            confirmPersistentSettingChange, confirmUnknownMechanicalEffect)
+        { RequestedRawSpeed = rawValue };
     }
 
     /// <summary>Could disconnect control and move hardware into unsafe state; never run automatically.</summary>
@@ -111,6 +114,31 @@ public sealed record Rc3040sAtDispatchObservation(
     bool PersistentSettingVerified,
     bool ReadbackAvailable,
     bool DiagnosticEchoMatched = false);
+
+/// <summary>
+/// Independent AT speed-write verification result. Updated means only that a
+/// later configuration C2 reported the requested raw value, not that EEPROM
+/// or the physical motor speed was independently validated.
+/// </summary>
+public enum Rc3040sSpeedReadbackOutcome
+{
+    Updated,
+    Unchanged,
+    ReadbackUnavailable,
+    UnexpectedValue,
+    IdentityMismatch,
+    UncertainAfterWrite
+}
+
+public sealed record Rc3040sSpeedWriteReadback(
+    Rc3040sConfigurationSnapshot Before,
+    Rc3040sConfigurationSnapshot? After,
+    Rc3040sSpeedReadbackOutcome Outcome,
+    ushort RequestedRawSpeed,
+    bool CommandAttempted,
+    bool NetworkSendCompleted,
+    bool PersistentSettingVerified,
+    string Detail);
 
 /// <summary>
 /// Two-phase management transport: C2 configuration identification first,
@@ -198,6 +226,95 @@ public sealed class Rc3040sAtManagementClient : IAsyncDisposable
             PersistentSettingVerified: false,
             ReadbackAvailable: false,
             DiagnosticEchoMatched: exactEcho);
+    }
+
+    /// <summary>
+    /// One connection for: C2 preflight, one explicitly permitted speed write,
+    /// and fresh C2 readback. Never reconnects or retries an AT command.
+    /// The onWriteAttempt callback is invoked BEFORE network transmission so
+    /// callers may fail closed if sending or readback then throws.
+    /// </summary>
+    public async Task<Rc3040sSpeedWriteReadback> SendSpeedAndReadbackAsync(
+        Rc3040sAtWritePermit permit,
+        string? expectedMaskedDeviceId = null,
+        Action? onWriteAttempt = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(permit);
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (permit.Operation is not (Rc3040sAtOperation.AzimuthSpeed or
+            Rc3040sAtOperation.ElevationSpeed) || permit.RequestedRawSpeed is null)
+            throw new ArgumentException("A one-shot AZ/EL speed permit is required.", nameof(permit));
+        if (Interlocked.Exchange(ref commandAttempted, 1) != 0)
+            throw new InvalidOperationException("One AT configuration operation per session.");
+
+        var before = await ReadConfigurationForWriteAsync(cancellationToken).ConfigureAwait(false);
+        if (before.FirmwareVersion is null || !before.SawNetworkSection ||
+            before.RecognizedFieldCount < 3 || before.MaskedDeviceId is null)
+            throw new InvalidDataException("Incomplete firmware/device preflight; no AT was transmitted.");
+
+        // Reject a stale UI selection before consuming the permit or sending.
+        if (expectedMaskedDeviceId is not null &&
+            !string.Equals(expectedMaskedDeviceId, before.MaskedDeviceId,
+                StringComparison.Ordinal))
+            throw new InvalidOperationException("Connected device differs from the selected device.");
+        if (before.FirmwareVersion != permit.ExpectedFirmware)
+            throw new InvalidOperationException("Firmware mismatch; no AT was transmitted.");
+
+        bool azimuth = permit.Operation == Rc3040sAtOperation.AzimuthSpeed;
+        ushort? existing = azimuth ? before.AzimuthSpeedRaw : before.ElevationSpeedRaw;
+        if (existing is null)
+            throw new InvalidDataException("Preflight speed unavailable; no AT was transmitted.");
+        ushort requested = permit.RequestedRawSpeed.Value;
+        if (existing == requested)
+            return new Rc3040sSpeedWriteReadback(before, before,
+                Rc3040sSpeedReadbackOutcome.Unchanged, requested,
+                false, false, false, "Already at requested raw setting; no AT transmitted.");
+
+        // The permit is consumed once, and may never be retried implicitly.
+        byte[] command = permit.ConsumeExactlyOnce(before.FirmwareVersion);
+        onWriteAttempt?.Invoke(); // The caller must mark potential transmission here.
+        bool sendCompleted = false;
+        try
+        {
+            await ws.SendFirmwareCommandAsync(command, true, cancellationToken).ConfigureAwait(false);
+            sendCompleted = true;
+            // Do NOT reconnect: this C2 is a new read within the existing WS.
+            var after = await ReadConfigurationForWriteAsync(cancellationToken).ConfigureAwait(false);
+            if (after.FirmwareVersion != before.FirmwareVersion ||
+                after.MaskedDeviceId != before.MaskedDeviceId)
+                return new Rc3040sSpeedWriteReadback(before, after,
+                    Rc3040sSpeedReadbackOutcome.IdentityMismatch, requested,
+                    true, true, false, "Firmware/device changed during readback.");
+            ushort? value = azimuth ? after.AzimuthSpeedRaw : after.ElevationSpeedRaw;
+            var outcome = value is null
+                ? Rc3040sSpeedReadbackOutcome.ReadbackUnavailable
+                : value == requested
+                    ? Rc3040sSpeedReadbackOutcome.Updated
+                    : value == existing
+                        ? Rc3040sSpeedReadbackOutcome.Unchanged
+                        : Rc3040sSpeedReadbackOutcome.UnexpectedValue;
+            string explanation = outcome switch
+            {
+                Rc3040sSpeedReadbackOutcome.Updated =>
+                    "New C2 reports the requested setting; nonvolatile persistence unverified.",
+                Rc3040sSpeedReadbackOutcome.Unchanged => "New C2 reports the previous speed.",
+                Rc3040sSpeedReadbackOutcome.ReadbackUnavailable =>
+                    "New C2 did not include a speed field.",
+                _ => "New C2 reports an unexpected value."
+            };
+            return new Rc3040sSpeedWriteReadback(before, after, outcome,
+                requested, true, true, false, explanation);
+        }
+        catch (Exception ex) when (ex is WebSocketException or IOException or
+            TimeoutException or OperationCanceledException or InvalidDataException)
+        {
+            if (cancellationToken.IsCancellationRequested) throw;
+            return new Rc3040sSpeedWriteReadback(before, null,
+                Rc3040sSpeedReadbackOutcome.UncertainAfterWrite, requested,
+                true, sendCompleted, false,
+                $"AT may have been transmitted; readback uncertain ({ex.GetType().Name}). Do not retry.");
+        }
     }
 
     private static string RedactAtResponse(string value)

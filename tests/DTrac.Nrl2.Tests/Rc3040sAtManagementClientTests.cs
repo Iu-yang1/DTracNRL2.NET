@@ -191,6 +191,90 @@ public sealed class Rc3040sAtManagementClientTests
         await server;
     }
 
+    [Theory]
+    [InlineData(true, false, Rc3040sSpeedReadbackOutcome.Updated)]
+    [InlineData(false, true, Rc3040sSpeedReadbackOutcome.Unchanged)]
+    public async Task SpeedWriteReadbackUsesSingleWebSocketAndNeverRetries(
+        bool azimuth, bool unchanged, Rc3040sSpeedReadbackOutcome expected)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(16));
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        int accepted = 0, atWrites = 0, c2Reads = 0, attempted = 0;
+        ushort requested = 5735;
+        var server = Task.Run(async () =>
+        {
+            using var tcp = await listener.AcceptTcpClientAsync(deadline.Token);
+            Interlocked.Increment(ref accepted);
+            using var ws = await AcceptAsync(tcp, deadline.Token);
+            for (int step = 0; step < (unchanged ? 1 : 2); step++)
+            {
+                Assert.Equal("C2\r", await ReceiveTextAsync(ws, deadline.Token));
+                Interlocked.Increment(ref c2Reads);
+                foreach (var frame in ConfigFrames(Firmware))
+                    await ws.SendAsync(Encoding.ASCII.GetBytes(frame),
+                        WebSocketMessageType.Text, true, deadline.Token);
+                ushort value = step == 0 ? (ushort)5000 : requested;
+                var speedFrame = $"==========YUNTAI SETUP===========\r\n" +
+                    $"AT+AZ_SPD={value:D5}\r\nAT+EL_SPD={value:D5}\r\n";
+                await ws.SendAsync(Encoding.ASCII.GetBytes(speedFrame),
+                    WebSocketMessageType.Text, true, deadline.Token);
+                if (unchanged) break;
+                string at = await ReceiveTextAsync(ws, deadline.Token);
+                Assert.Equal(azimuth ? "AT+AZ_SPD=05735\r" : "AT+EL_SPD=05735\r", at);
+                Interlocked.Increment(ref atWrites);
+            }
+        });
+        await using var client = await Rc3040sAtManagementClient.ConnectAsync(
+            "127.0.0.1", port, deadline.Token);
+        var permit = Rc3040sAtWritePermit.ForSpeed(
+            azimuth, unchanged ? (ushort)5000 : requested, Firmware, true, true);
+        var result = await client.SendSpeedAndReadbackAsync(
+            permit, "**********F607", () => Interlocked.Increment(ref attempted),
+            deadline.Token);
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(unchanged ? 0 : 1, attempted);
+        Assert.Equal(unchanged ? 0 : 1, atWrites);
+        Assert.Equal(unchanged ? 1 : 2, c2Reads);
+        Assert.Equal(1, accepted);
+        Assert.False(result.PersistentSettingVerified);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.SendSpeedAndReadbackAsync(permit));
+        await server;
+    }
+
+    [Fact]
+    public async Task SpeedPreflightMismatchBlocksWrite()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var server = Task.Run(async () =>
+        {
+            using var tcp = await listener.AcceptTcpClientAsync(deadline.Token);
+            using var ws = await AcceptAsync(tcp, deadline.Token);
+            Assert.Equal("C2\r", await ReceiveTextAsync(ws, deadline.Token));
+            foreach (var frame in ConfigFrames(Firmware))
+                await ws.SendAsync(Encoding.ASCII.GetBytes(frame),
+                    WebSocketMessageType.Text, true, deadline.Token);
+            await ws.SendAsync("==========YUNTAI SETUP===========\r\nAT+AZ_SPD=05000\r\n"u8.ToArray(),
+                WebSocketMessageType.Text, true, deadline.Token);
+            await Task.Delay(950, deadline.Token);
+            Assert.Equal(WebSocketState.Open, ws.State);
+        });
+        await using var client = await Rc3040sAtManagementClient.ConnectAsync(
+            "127.0.0.1", port, deadline.Token);
+        var permit = Rc3040sAtWritePermit.ForSpeed(true, 5735, Firmware, true, true);
+        int attempted = 0;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.SendSpeedAndReadbackAsync(permit, "**********FFFF",
+                () => attempted++, deadline.Token));
+        Assert.Equal(0, attempted);
+        await server;
+    }
+
     private static IEnumerable<string> ConfigFrames(string version)
     {
         yield return version + " " + FictionalHardwareId + "\r\n";

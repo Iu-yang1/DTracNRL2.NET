@@ -189,3 +189,20 @@ dotnet run --project src/DTrac.Nrl2.Host -- --observe-udp 192.168.1.100 60050
 ```
 
 Replace the sample LAN IP and select the destination UDP port confirmed for your firmware. This mode **only receives**, reports masked identifiers and directional length encoding, and does not automatically set D_IP or send any packets. [Read-only observation procedure](docs/reverse-engineering/RC3040S_passive_nrl2_observation.md).
+
+### One-session speed configuration readback (experimental)
+
+The SDK now supports
+`Rc3040sAtManagementClient.SendSpeedAndReadbackAsync(...)` for an **explicit,
+operator-approved** speed update. It sends a fresh C2 preflight, pins firmware
+and a masked device identifier, sends **at most one** `AT+AZ_SPD` or
+`AT+EL_SPD` command, then issues a new C2 readback on the **same**
+WebSocket/60030 connection. The callback `onWriteAttempt` runs immediately
+before transmission so host applications can lock movement if the result becomes
+ambiguous. No automatic reconnect or write retry occurs.
+
+`Updated` only means the subsequent firmware snapshot reports the new raw
+number: it is **not** a persistent EEPROM check, physical speed calibration,
+or STOP acknowledgement. If the channel fails after a possible write, treat
+`UncertainAfterWrite` as fail-closed. GS-232 TCP/60020 motor interlocks and
+motion profiles stay in SkyRoof, not in this protocol SDK.

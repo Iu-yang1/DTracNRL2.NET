@@ -37,7 +37,7 @@ public static partial class Rc3040sConfigurationDump
 
         IPAddress? ip = null, gateway = null, mask = null, dns = null, destination = null;
         bool? dhcp = null;
-        string? firmware = null, maskedMac = null;
+        string? firmware = null, maskedMac = null, maskedDeviceId = null;
         bool networkHeader = false, udpHeader = false;
         bool yuntaiHeader = false, identityHeader = false;
         ushort? azSpeed = null, elSpeed = null;
@@ -52,6 +52,7 @@ public static partial class Rc3040sConfigurationDump
             if (Rc3040sFirmwareBanner.TryParse(line, out var banner))
             {
                 firmware = banner.VersionLabel;
+                maskedDeviceId = banner.MaskedDeviceId;
                 continue;
             }
             if (line.Contains("NET SETUP", StringComparison.OrdinalIgnoreCase))
@@ -149,7 +150,7 @@ public static partial class Rc3040sConfigurationDump
             firmware, ip, gateway, mask, dns, dhcp, destination, maskedMac,
             networkHeader, udpHeader, fields.Count, count,
             azSpeed, elSpeed, modelToken, xwToken, travelModeToken,
-            yuntaiHeader, identityHeader);
+            yuntaiHeader, identityHeader, maskedDeviceId);
     }
 
     private static bool TrySpeed(string value, out ushort raw)
@@ -188,4 +189,5 @@ public sealed record Rc3040sConfigurationSnapshot(
     string? XwModeToken = null,
     string? TravelModeToken = null,
     bool SawYuntaiSection = false,
-    bool SawIdentitySection = false);
+    bool SawIdentitySection = false,
+    string? MaskedDeviceId = null);
