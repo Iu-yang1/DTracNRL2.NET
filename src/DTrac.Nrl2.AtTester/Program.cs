@@ -18,7 +18,7 @@ internal static class Program
     private static readonly List<string> Report = new();
     private static readonly Regex SafeEcho = new(@"^[A-Za-z0-9_-]{1,32}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private const string PackageVersion = "1.0.1-at-connect-diagnostics";
+    private const string PackageVersion = "1.0.2-device-identity";
 
     private static async Task<int> Main(string[] args)
     {
@@ -29,7 +29,8 @@ internal static class Program
         {
             if (!SafeEcho.IsMatch("TEST_01") || SafeEcho.IsMatch("unsafe\r\nAT+RESET") ||
                 ParseRawSpeed("00300") != 300 || ParseRawSpeed("00000") is not null ||
-                !IPAddress.TryParse("192.168.1.9", out _))
+                !IPAddress.TryParse("192.168.1.9", out _) ||
+                MaskDeviceId("123456789ABCDE") != "**********BCDE")
                 return 1;
             Console.WriteLine("SELF-TEST PASS; no network connection or device commands.");
             return 0;
@@ -71,6 +72,9 @@ internal static class Program
         }
 
         Write($"目标：{host}:60030 (WebSocket) | 本地时间 {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
+        // The controller previously reported DHCP=ON. Never assume an old IPv4
+        // lease still addresses the same hardware. The UDP ping is read-only.
+        await CheckIdentityAsync(host!);
         Write("[1] 只读配置检查（自动运行，不发送 AT）");
         Rc3040sConfigurationSnapshot? config = null;
         bool preflightHadConnectionFailure = false;
@@ -249,6 +253,36 @@ internal static class Program
         return 0;
     }
 
+    private static string MaskDeviceId(string fullId)
+    {
+        if (string.IsNullOrEmpty(fullId) || fullId.Length < 4) return "[invalid]";
+        return "**********" + fullId[^4..].ToUpperInvariant();
+    }
+
+    private static async Task CheckIdentityAsync(IPAddress device)
+    {
+        Write("[UDP/60059] 设备身份只读确认：定向发送一次 cmd=ping");
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var devices = await Rc3040sDiscovery.DiscoverAtAsync(
+                device, TimeSpan.FromSeconds(2), limit.Token);
+            if (devices.Count == 0)
+            {
+                Write("[UDP/60059] 无PONG，无法确认此IP对应的设备身份。可能是设备或网络环境变化；不是TCP/60030状态证据。");
+                return;
+            }
+            foreach (var item in devices.Take(3))
+                Write($"[UDP/60059] PONG {item.Address}; 类型=RC-3040S; GS-232端口={item.LocalTcpPort}; " +
+                    $"设备ID={MaskDeviceId(item.RotorId)}");
+            Write("[UDP/60059] 请与以前成功日志的设备ID后4位核对。仅后4位相同不构成加密身份认证。");
+        }
+        catch (Exception ex)
+        {
+            Write("[UDP/60059] 只读发现异常：" + SafeException(ex));
+        }
+    }
+
     private static async Task InspectLanConnectivityAsync(IPAddress device)
     {
         Write("[诊断] 仅在 WebSocket 出错后检查 TCP 会话状态与端口。");
@@ -271,7 +305,8 @@ internal static class Program
             Write("[诊断] 枚举本机 TCP 会话失败：" + SafeException(ex));
         }
 
-        foreach (int port in new[] { 60030, 60020 })
+        Write("[诊断] 失败的WS握手已返回底层 SocketError，无需额外探测 TCP/60030（避免占用嵌入式服务连接槽）。");
+        foreach (int port in new[] { 60020 })
         {
             using var tcp = new TcpClient(AddressFamily.InterNetwork);
             using var limit = new CancellationTokenSource(TimeSpan.FromMilliseconds(2500));
