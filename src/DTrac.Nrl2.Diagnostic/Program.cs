@@ -4,11 +4,13 @@ using System.Net.Sockets;
 using System.Text;
 using DTrac.Nrl2.Discovery;
 using DTrac.Nrl2.Transport;
+using System.Text.RegularExpressions;
 
 // No developer tools needed on the radio PC. Publish as a self-contained win-x64 EXE.
 // This diagnostic never sends GS-232 motion, AT configuration or firmware writes.
 // It tests TCP reachability, performs a WebSocket HTTP Upgrade/read-only receive,
-// and sends one fixed UDP discovery ping.
+// and sends one fixed UDP discovery ping to broadcast, followed by a directed ping.
+// Only on explicit operator opt-in, probes known read-only C2 position reports.
 internal static class Program
 {
     private const int ConnectTimeoutMs = 3500;
@@ -35,15 +37,18 @@ internal static class Program
             return 0;
         }
 
-        Write("RC-3040S 局域网只读诊断 / LAN diagnostics");
+        Write("RC-3040S 局域网只读诊断 / LAN diagnostics v2");
         Write("无需 Git、Python、Visual Studio 或 .NET SDK。");
         Write("不会发送旋转、速度设置、复位或 EEPROM 写入命令。");
         Write("建议先暂停 SkyRoof 自动跟踪，避免竞争 TCP 连接。");
         Write("");
 
+        bool explicitReadOnlyQuery = args.Length == 3 && args[2] == "--read-only-query";
+        bool knownHostArguments = args.Length is 2 or 3 && args[0] == "--host" &&
+            (args.Length == 2 || explicitReadOnlyQuery);
         IPAddress host;
-        if (args is ["--host", var suppliedHost] &&
-            IPAddress.TryParse(suppliedHost, out var fromArgs) &&
+        if (knownHostArguments &&
+            IPAddress.TryParse(args[1], out var fromArgs) &&
             fromArgs.AddressFamily == AddressFamily.InterNetwork)
         {
             host = fromArgs;
@@ -67,13 +72,27 @@ internal static class Program
             return 2;
         }
 
+        bool probeReadOnlyPosition = explicitReadOnlyQuery;
+        if (args.Length == 0)
+        {
+            Console.Write("是否附加只读 C2 角度查询？这会发送 GS-232 C2 但不会启动运动。 [y/N]：");
+            probeReadOnlyPosition = string.Equals(
+                Console.ReadLine()?.Trim(), "y", StringComparison.OrdinalIgnoreCase);
+        }
+
         Write($"目标控制板 IP：{host}");
         Write($"开始时间：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
+        Write($"C2 只读主动查询：{(probeReadOnlyPosition ? "用户明确启用" : "未启用")}");
         Write("");
 
         await CheckTcpAsync(host, 60020, "GS-232");
         await CheckTcpAsync(host, 60030, "WebSocket 管理");
         await CheckWebSocketAsync(host);
+        if (probeReadOnlyPosition)
+        {
+            await CheckGs232PositionAsync(host);
+            await CheckWebSocketPositionAsync(host);
+        }
         await CheckDiscoveryAsync(host);
 
         Write("");
@@ -135,9 +154,59 @@ internal static class Program
         }
     }
 
+
+    /// <summary>Explicitly opted-in C2 only; never sends W/M/S/jog/AT or EEPROM configuration.</summary>
+    private static async Task CheckGs232PositionAsync(IPAddress host)
+    {
+        Write("[GS-232/60020] 开始 C2 只读角度回读（已获用户确认）");
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            using var client = await Rc3040sLanClient.ConnectAsync(host.ToString(), 60020, cancel.Token);
+            var position = await client.QueryPositionAsync(TimeSpan.FromSeconds(2), cancel.Token);
+            Write(position is null
+                ? "[GS-232/60020] C2 无角度回复/超时"
+                : FormattableString.Invariant(
+                    $"[GS-232/60020] C2 AZ={position.Value.Azimuth:F1}, EL={position.Value.Elevation:F1}"));
+        }
+        catch (Exception ex)
+        {
+            Write("[GS-232/60020] C2 ERROR: " + Compact(ex));
+        }
+    }
+
+    /// <summary>Only sends a known read-only C2 text query on an isolated new WebSocket session.</summary>
+    private static async Task CheckWebSocketPositionAsync(IPAddress host)
+    {
+        Write("[WebSocket/60030] 开始 C2 只读文本查询（已获用户确认）");
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            await using var ws = await Rc3040sWebSocketClient.ConnectAsync(
+                host.ToString(), 60030, cancel.Token);
+            // The device may route text to AT only, to GS-232, or to neither.
+            // A lack of response does NOT disprove the management WebSocket protocol.
+            await ws.SendTextAsync("C2\r", cancellationToken: cancel.Token);
+            string? reply = await ws.ReceiveTextAsync(TimeSpan.FromSeconds(2), cancel.Token);
+            Write(reply is null
+                ? "[WebSocket/60030] C2 已发送，未收到文本答复"
+                : "[WebSocket/60030] C2 回复: " + EscapeAndLimit(reply, 512));
+        }
+        catch (Exception ex)
+        {
+            Write("[WebSocket/60030] C2 ERROR: " + Compact(ex));
+        }
+    }
+
     private static async Task CheckDiscoveryAsync(IPAddress host)
     {
-        Write("[UDP/60059] 发送一次只读发现 cmd=ping");
+        await DiscoverViaAsync(host, IPAddress.Broadcast, "broadcast");
+        await DiscoverViaAsync(host, host, "unicast");
+    }
+
+    private static async Task DiscoverViaAsync(IPAddress host, IPAddress destination, string mode)
+    {
+        Write($"[UDP/60059 {mode}] 仅发送 cmd=ping\\n 至 {destination}");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         using var udp = new UdpClient(AddressFamily.InterNetwork);
         try
@@ -145,7 +214,7 @@ internal static class Program
             udp.EnableBroadcast = true;
             udp.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
             await udp.SendAsync(Rc3040sDiscovery.CreatePing(),
-                new IPEndPoint(IPAddress.Broadcast, Rc3040sDiscovery.DiscoveryPort));
+                new IPEndPoint(destination, Rc3040sDiscovery.DiscoveryPort));
             int replies = 0;
             while (!timeout.IsCancellationRequested && replies < 8)
             {
@@ -156,16 +225,20 @@ internal static class Program
                 replies++;
                 bool parsed = Rc3040sDiscovery.TryParsePong(
                     response.Buffer, response.RemoteEndPoint.Address, out var rotor);
+                string raw = Encoding.ASCII.GetString(response.Buffer);
+                // Don't inadvertently copy the full seven-byte device ID into logs.
+                raw = Regex.Replace(raw, @"(?i)(rotorid|id)\s*=\s*([0-9a-f]{14})",
+                    match => match.Groups[1].Value + "=**********" + match.Groups[2].Value[^4..]);
                 Write(parsed && rotor is not null
-                    ? $"[UDP/60059] PONG from {response.RemoteEndPoint}; TCP={rotor.LocalTcpPort}; RotorID=**********{rotor.RotorId[^4..]}"
-                    : $"[UDP/60059] 原始响应 {response.RemoteEndPoint}, {response.Buffer.Length}B: {EscapeAndLimit(Encoding.ASCII.GetString(response.Buffer), 200)}");
+                    ? $"[UDP/60059 {mode}] PONG {response.RemoteEndPoint}; TCP={rotor.LocalTcpPort}; RotorID=**********{rotor.RotorId[^4..]}"
+                    : $"[UDP/60059 {mode}] RAW {response.RemoteEndPoint}, {response.Buffer.Length}B: {EscapeAndLimit(raw, 200)}");
             }
             if (replies == 0)
-                Write("[UDP/60059] 2 秒内无所选 IP 的应答，不能据此证明 UDP 不可用");
+                Write($"[UDP/60059 {mode}] 2 秒内无所选 IP 回复（不能说明 Socket7 NRL2 不可用）");
         }
         catch (Exception ex)
         {
-            Write("[UDP/60059] ERROR: " + Compact(ex));
+            Write($"[UDP/60059 {mode}] ERROR: {Compact(ex)}");
         }
     }
 
@@ -219,8 +292,8 @@ internal static class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine("RC3040S-Diagnostic.exe [--host <IPv4>]");
-        Console.WriteLine("双击后输入云台 IP；自动执行 TCP/60020、TCP/60030、WebSocket 和 UDP 发现只读诊断。");
-        Console.WriteLine("不会发送电机控制指令、速度设置或 EEPROM 写入。");
+        Console.WriteLine("RC3040S-Diagnostic.exe [--host <IPv4> [--read-only-query]]");
+        Console.WriteLine("双击并输入 IP；可选只读 C2 查询。默认仅检查 TCP/WebSocket 握手与 UDP 广播+单播发现。");
+        Console.WriteLine("任何模式均不发送电机运动、速度设置或 EEPROM 写入。");
     }
 }
