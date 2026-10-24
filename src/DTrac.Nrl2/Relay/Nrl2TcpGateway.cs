@@ -23,7 +23,7 @@ public sealed class Nrl2TcpGateway : IDisposable
     private readonly bool allowMotorCommands;
     private readonly int maxAzimuth;
     private readonly int maxElevation;
-    private readonly Dictionary<string, DateTimeOffset> lastFreshPosition = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Sid, string Endpoint), DateTimeOffset> lastFreshPosition = new();
     private bool disposed;
 
     public event Action<Exception>? TransportFailure;
@@ -92,7 +92,7 @@ public sealed class Nrl2TcpGateway : IDisposable
             if (position is null) return;
 
             // Firmware response is not a protocol ACK; only record a recent validated TCP read.
-            lastFreshPosition[request.SourceId] = DateTimeOffset.UtcNow;
+            lastFreshPosition[(request.SourceId, packet.RemoteEndPoint.ToString())] = DateTimeOffset.UtcNow;
             int az = (int)Math.Round(position.Value.Azimuth, MidpointRounding.AwayFromZero);
             int el = (int)Math.Round(position.Value.Elevation, MidpointRounding.AwayFromZero);
             string line = command switch
@@ -110,14 +110,15 @@ public sealed class Nrl2TcpGateway : IDisposable
         if (command == "S\r\n")
         {
             await controller.StopAsync(deadline.Token).ConfigureAwait(false);
-            lastFreshPosition.Remove(request.SourceId);
+            lastFreshPosition.Remove((request.SourceId, packet.RemoteEndPoint.ToString()));
             return;
         }
 
-        // A successful C2 on this gateway within 3 seconds is a prerequisite to new motion.
+        // A successful C2 on this gateway from the SAME UDP endpoint within 3 seconds
+        // is a prerequisite to new motion; matching SID alone does not confer authority.
         // The application must still enforce real mechanical limits and provide physical STOP.
         if (!allowMotorCommands ||
-            !lastFreshPosition.TryGetValue(request.SourceId, out var seenAt) ||
+            !lastFreshPosition.TryGetValue((request.SourceId, packet.RemoteEndPoint.ToString()), out var seenAt) ||
             DateTimeOffset.UtcNow - seenAt > TimeSpan.FromSeconds(3))
             return;
 

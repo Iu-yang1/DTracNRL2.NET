@@ -52,6 +52,46 @@ public sealed class GatewayTests
     }
 
     [Fact]
+    public async Task AnotherUdpEndpointWithSameSidCannotReuseFreshnessToMoveMotor()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        int accepts = 0;
+        var listenerTask = Task.Run(async () =>
+        {
+            using var first = await listener.AcceptTcpClientAsync(cts.Token);
+            Interlocked.Increment(ref accepts);
+            var stream = first.GetStream();
+            byte[] query = new byte[3];
+            await stream.ReadExactlyAsync(query, cts.Token);
+            Assert.Equal("C2\r", Encoding.ASCII.GetString(query));
+            await stream.WriteAsync("AZ=180  EL=030\r\n"u8.ToArray(), cts.Token);
+            // Once the first read-only query is answered, no additional TCP
+            // connection should occur for a forged same-SID motion command.
+            await Task.Delay(250, cts.Token);
+        });
+        using var gateway = new Nrl2TcpGateway(
+            new IPEndPoint(IPAddress.Loopback, 0), Rotor, "127.0.0.1", port,
+            allowMotorCommands: true);
+        var runner = gateway.RunAsync(cts.Token);
+        try
+        {
+            using var first = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            using var second = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            await first.SendAsync(Nrl2Frame.Encode(Sid, Rotor, Gs232Commands.Query()), gateway.LocalEndPoint);
+            var response = await first.ReceiveAsync(cts.Token);
+            Assert.True(Nrl2Frame.TryDecodeReply(response.Buffer, Sid, Rotor, out _));
+            await second.SendAsync(Nrl2Frame.Encode(Sid, Rotor,
+                Gs232Commands.MoveTo(new RotatorPosition(180, 30))), gateway.LocalEndPoint);
+            await listenerTask;
+            Assert.Equal(1, Volatile.Read(ref accepts));
+        }
+        finally { cts.Cancel(); await runner; listener.Stop(); }
+    }
+
+    [Fact]
     public void GatewayRequiresExplicitPhysicalTravelBounds()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new Nrl2TcpGateway(

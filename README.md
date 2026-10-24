@@ -161,3 +161,9 @@ isolated initially; a successful handshake does not validate configuration write
 ### Native diagnostic clarification (stage 7)
 
 `AT+TEST=` is **not** proven to be a native motor cruise command. Firmware trace routes the suffix to a WebSocket text sender; the likely meaning is a test echo. `Rc3040sDiagnosticParser` parses reported AZ/EL raw Hz and a second uncalibrated /s field from firmware diagnostic lines. See [stage 7 evidence](docs/reverse-engineering/RC3040S_stage7_AT_echo_and_speed.md). These diagnostic fields are not calibrated mechanical acceleration readings.
+
+### Stage 8: APK DEMO button is not proven supported by this firmware
+
+The DTrac APK sends `AT+DEMO=ON/OFF\r\n` from its rotator UI, but the SHA-pinned RC-3040S 251217 firmware AT matcher does not contain these strings. Do not confuse that with `AT+TEST=`, which follows an echo/text-send path. The SDK's `DemoCruise` is explicitly **host-side**. See [APK-vs-firmware evidence](docs/reverse-engineering/RC3040S_stage8_APK_DEMO_compatibility.md).
+
+The UDP→TCP gateway now ties the recent-C2 motion prerequisite to both APP SID **and the originating UDP IP:port**. This reduces accidental cross-client control inheritance but is not cryptographic authentication. Restrict LAN exposure with firewall rules.

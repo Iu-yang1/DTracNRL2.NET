@@ -26,3 +26,7 @@
 **加减速与 DEMO：** `0x7A44`/ `0x7ABB` 更新电机计时器相关寄存器，固件文字状态将原始速度标为 Hz 并报告另一数值的每秒单位，具体角速度换算常数和自动加减速离散状态尚未复原。没有证据支持可配置 `AT+ACC` 或 `AT+DEC`。 `AT+TEST=` 不是已经验证的巡航指令，默认只能使用 SDK 自己的闭环巡航。
 
 **保密与安全：** 该库不附带供应商固件或 APK；此命令表不包含任何控制板的实际密码或身份标识。设备配置指令必须由操作者确认后手动发送，不能由启动、发现、连接恢复触发。
+
+## Cross-sample note: APK AT+DEMO is not in this firmware matcher
+
+The APK contains `AT+DEMO=ON/OFF` in `Ll00.onClick` and queues the resulting bytes through `Lei0.j`, but this exact 251217 firmware image contains no `AT+DEMO` literal; see [stage 8](RC3040S_stage8_APK_DEMO_compatibility.md). This command must not be represented as supported native DEMO for this firmware without an independently verified alternate entry point.
