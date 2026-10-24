@@ -179,3 +179,13 @@ Static firmware traces show `AT+CALL=` copies up to 6 characters to the device c
 ### Stage 11: configure a local UDP relay target (offline-only encoder)
 
 The firmware factory init references a zero-padded remote address string at ROM `0x9C33` copied to config slot `0x50`; the `AT+D_IP=` command writes the same string field. `SetRemoteRelayIp(IPAddress)` constructs `AT+D_IP=ddd.ddd.ddd.ddd\\r`, but never sends it. Two factory port words are `0xEA92=60050`; the precise Socket7 role awaits capture. **Never issue AT+INIT to recover a misconfigured relay automatically.** See [stage 11](docs/reverse-engineering/RC3040S_stage11_factory_relay_host.md).
+
+### Passive, zero-transmit Socket7 NRL2 observer
+
+For real firmware session evidence without controlling the motor:
+
+```bash
+dotnet run --project src/DTrac.Nrl2.Host -- --observe-udp 192.168.1.100 60050
+```
+
+Replace the sample LAN IP and select the destination UDP port confirmed for your firmware. This mode **only receives**, reports masked identifiers and directional length encoding, and does not automatically set D_IP or send any packets. [Read-only observation procedure](docs/reverse-engineering/RC3040S_passive_nrl2_observation.md).

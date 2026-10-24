@@ -5,10 +5,31 @@ using DTrac.Nrl2.Protocol;
 static void Help()
 {
     Console.WriteLine("Local DTrac NRL2 experimental services (not production firmware validated).");
+    Console.WriteLine("  --observe-udp <listen-ip> <udp-port> (passive; never transmits)");
     Console.WriteLine("  --native-relay <listen-ip> <udp-port> <rotorid> <trusted-device-ip> [--enable-motion]");
     Console.WriteLine("  --tcp-gateway <listen-ip> <udp-port> <rotorid> <controller-host> [--enable-motion]");
     Console.WriteLine("Explicitly binding a LAN interface exposes unauthenticated command transport.");
     Console.WriteLine("Use a restrictive firewall/VLAN and hardware emergency stop; never expose it to the Internet.");
+}
+
+if (args.Length == 3 && args[0] == "--observe-udp")
+{
+    if (!IPAddress.TryParse(args[1], out var observeBind) ||
+        !int.TryParse(args[2], out int observePort) || observePort is < 1 or > 65535)
+    {
+        Help();
+        return;
+    }
+    using var cancel = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancel.Cancel(); };
+    using var observer = new Nrl2PassiveMonitor(new IPEndPoint(observeBind, observePort));
+    observer.FrameObserved += value => Console.WriteLine(
+        $"{DateTimeOffset.UtcNow:O} src={value.Sender} enc={value.Encoding} " +
+        $"type={value.MessageType} len={value.FrameBytes} " +
+        $"ids={value.MaskedSourceId}/{value.MaskedTargetId} payload={value.PayloadBytes}");
+    Console.WriteLine($"PASSIVE NRL2 listening {observer.LocalEndPoint}. No packet will be sent.");
+    await observer.RunAsync(cancel.Token);
+    return;
 }
 
 if (args.Length < 5 ||
