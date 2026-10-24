@@ -29,3 +29,21 @@ Examples: `C2\r\n` = 52 bytes, `W181 030\r\n` = 58, `S\r\n` = 51. On the W5500 R
 Firmware evidence: Type 5 enters GS-232 handler via `0x482F -> 0x4A3A -> 0x3433`. Host `W` commands request a target position; firmware is responsible for motor ramps. `PARK` uses a single W command, not encoder rehoming. Host-side DEMO is a feedback-gated series of W commands, **not** a verified firmware cruise command.
 
 Not confirmed: production DTrac relay binary/protocol, authentication, control arbitration, heartbeat, public routing, precise stale reply handling, hardware remote reset `AT+RESET`, physical motor ACK/STOP semantics. **Do not use without physical limits and an emergency stop.** Use real hardware only after isolated bench checks.
+
+
+## Direct LAN control does not require the proprietary relay
+
+`Rc3040sLanClient.ConnectAsync(host, 60020)` opens the firmware's direct
+GS-232 TCP listener (Socket 3). No NRL2 envelope, APP SID, RotorID or DTrac
+public relay is involved. UDP/60059 is discovery only.
+
+For local TCP, the SDK sends CR-terminated `C2\r`, `S\r`,
+`W### ###\r` or direction commands, not the CRLF APK/NRL2 wrapping.
+The expected position response is `AZ=ddd  EL=ddd\r\n`, based on static
+firmware analysis. The connection itself sends **no motion command**.
+Physical emergency stop and mechanical limits remain mandatory; the LAN TCP
+interface is not authenticated and should be network isolated.
+
+Hardware compatibility, timeout and TCP reconnect behavior have not been
+measured on a real RC-3040S. If NRL2 transport is specifically required,
+an independently validated LAN relay would still be needed.

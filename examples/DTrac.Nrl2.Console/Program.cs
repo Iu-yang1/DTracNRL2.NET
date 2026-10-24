@@ -9,7 +9,7 @@ const string rotor = "123456789ABCDE";
 if (args.Length == 0)
 {
     Console.WriteLine(Convert.ToHexString(Nrl2Frame.Encode(sid, rotor, Gs232Commands.Query())));
-    Console.WriteLine("Offline example. Use --discover for LAN discovery (read-only), or --sim-query to query 127.0.0.1:19120.");
+    Console.WriteLine("Offline example. Use --discover for LAN discovery, --lan-query <host> for read-only TCP/60020, or --sim-query for 127.0.0.1:19120.");
     return;
 }
 if (args.SequenceEqual(new[] { "--discover" }))
@@ -24,4 +24,10 @@ if (args.SequenceEqual(new[] { "--sim-query" }))
     Console.WriteLine(await client.QueryPositionAsync(TimeSpan.FromSeconds(2)));
     return;
 }
-throw new ArgumentException("Supported: (none), --discover, --sim-query");
+if (args.Length == 2 && args[0] == "--lan-query")
+{
+    using var lan = await Rc3040sLanClient.ConnectAsync(args[1], Rc3040sLanClient.DefaultPort);
+    Console.WriteLine(await lan.QueryPositionAsync(TimeSpan.FromSeconds(2)));
+    return;
+}
+throw new ArgumentException("Supported: (none), --discover, --lan-query <host>, --sim-query");

@@ -8,7 +8,7 @@
 
 - Byte-exact 48-byte DTrac NRL2 envelope: ASCII `NRL2`, two ASCII decimal length bytes, 7-byte APP SID, 7-byte RotorID, Type `0x05`, `DTrac` tag and GS-232 payload at offset 48.
 - `C2\r\n` query, `W### ###\r\n` move, `S\r\n` stop, `L/R/U/D\r\n` jog, GS-232 position parser.
-- Read-only LAN discovery by `cmd=ping\n` to UDP/60059; TCP/60020 is **local** GS-232, **not** NRL2 remote relay.
+- Read-only LAN discovery by `cmd=ping\n` to UDP/60059; direct LAN GS-232 client over TCP/60020 with **no relay or RotorID** (separate transport from NRL2).
 - Explicitly configured UDP relay client (no built-in undocumented public server, NAT bypass or automatic motor movement).
 - Finite feedback-gated DEMO planner and loopback-only simulator.
 - xUnit offline vector/validation tests and GitHub Actions package build.
@@ -22,6 +22,25 @@ dotnet run --project examples/DTrac.Nrl2.Console
 dotnet run --project src/DTrac.Nrl2.Simulator
 dotnet run --project examples/DTrac.Nrl2.Console -- --sim-query
 ```
+
+## LAN-only use (no DTrac relay needed)
+
+Firmware static analysis shows a separate, direct GS-232 TCP listener on port 60020.
+The LAN protocol uses CR-terminated commands (`C2\r`, `S\r`, `W181 030\r`).
+The direct client sends **no command on connection**; movement is always explicit.
+
+```csharp
+using DTrac.Nrl2.Transport;
+
+using var lan = await Rc3040sLanClient.ConnectAsync("192.0.2.10", 60020);
+var current = await lan.QueryPositionAsync(TimeSpan.FromSeconds(2));
+// For safety, test queries with motor power disconnected first.
+// lan.MoveToAsync(...) is explicitly opt-in; never use it without limit checks.
+```
+
+`192.0.2.10` is an **example-only reserved address**, not an expected device IP.
+The LAN interface is not authenticated by this SDK; restrict TCP/60020 access to trusted networks.
+Current evidence is from firmware static analysis, not hardware-in-the-loop testing.
 
 ## API
 

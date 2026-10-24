@@ -8,7 +8,7 @@
     <RootNamespace>DTrac.Nrl2</RootNamespace>
     <Version>0.1.0-alpha.1</Version>
     <Authors>Iu-yang1</Authors>
-    <Description>Unofficial DTrac-dialect NRL2 codec, RC-3040S discovery and UDP rotator client.</Description>
+    <Description>Unofficial DTrac-dialect NRL2 codec, RC-3040S LAN discovery, direct GS-232 TCP and NRL2 UDP clients.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Iu-yang1/DTracNRL2.NET</RepositoryUrl>
