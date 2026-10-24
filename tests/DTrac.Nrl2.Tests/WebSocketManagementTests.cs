@@ -104,6 +104,68 @@ public sealed class WebSocketManagementTests
     }
 
     [Fact]
+    public async Task CapturesCompleteMultiFrameConfigurationWithExactlyOneC2()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var server = Task.Run(async () =>
+        {
+            using var accepted = await listener.AcceptTcpClientAsync(deadline.Token);
+            var stream = accepted.GetStream();
+            string headers = await ReadHttpHeadersAsync(stream, deadline.Token);
+            string key = headers.Split("\r\n", StringSplitOptions.None)
+                .First(line => line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))
+                .Split(':', 2)[1].Trim();
+            string accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(
+                key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+                "Sec-WebSocket-Accept: " + accept + "\r\n\r\n"), deadline.Token);
+            using var ws = WebSocket.CreateFromStream(stream, true, null, TimeSpan.FromSeconds(30));
+
+            var buffer = new byte[64];
+            var inbound = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
+            Assert.Equal("C2\r", Encoding.ASCII.GetString(buffer, 0, inbound.Count));
+
+            string[] four = [
+                "RC_3040S_67S_8H_260223_C A1B2C3D4E5F607\r\n",
+                "===========NET SETUP===========\r\nAT+IP=192.168.001.009\r\n",
+                "AT+MASK=255.255.255.000\r\nAT+DHCP=ON\r\n",
+                "===========UDP Destination IP SETUP===========\r\nAT+D_IP=202.141.176.002\r\n"
+            ];
+            foreach (string frame in four)
+            {
+                await ws.SendAsync(Encoding.ASCII.GetBytes(frame), WebSocketMessageType.Text,
+                    true, deadline.Token);
+                await Task.Delay(30, deadline.Token);
+            }
+            // Give the client time to observe a quiet inter-frame interval.
+            await Task.Delay(300, deadline.Token);
+            Assert.False(stream.DataAvailable); // no accidental second C2 in queue
+        });
+        try
+        {
+            await using var client = await Rc3040sWebSocketClient.ConnectAsync(
+                "127.0.0.1", port, deadline.Token);
+            var burst = await Rc3040sWebSocketCaptures.CaptureReadOnlyC2Async(
+                client, TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(180),
+                TimeSpan.FromSeconds(5), deadline.Token);
+            Assert.Equal(4, burst.Frames.Count);
+            Assert.True(burst.QuietGapObserved);
+            Assert.False(burst.LimitsReached);
+            var configuration = DTrac.Nrl2.Protocol.Rc3040sConfigurationDump.Parse(burst.Frames);
+            Assert.Equal(IPAddress.Parse("192.168.1.9"), configuration.ConfiguredIp);
+            Assert.Equal(IPAddress.Parse("202.141.176.2"), configuration.ConfiguredUdpDestination);
+            await server;
+        }
+        finally { listener.Stop(); }
+    }
+
+    [Fact]
     public async Task ClientValidatesHostAndPortBeforeNetworkAccess()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
