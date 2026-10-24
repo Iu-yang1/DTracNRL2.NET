@@ -57,8 +57,13 @@ public sealed class FirmwareDiagnosticsTests
             Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetSubnetMask(IPAddress.Parse("255.255.255.0"))));
         Assert.Equal("AT+DNS=008.008.008.008\r",
             Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetDns(IPAddress.Parse("8.8.8.8"))));
+        Assert.Equal("AT+D_IP=192.168.001.050\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetRemoteRelayIp(address)));
         Assert.Throws<ArgumentException>(() =>
             Rc3040sFirmwareCommands.SetIpAddress(IPAddress.IPv6Loopback));
+        Assert.Throws<ArgumentException>(() =>
+            Rc3040sFirmwareCommands.SetRemoteRelayIp(IPAddress.IPv6Loopback));
+        Assert.Equal(60050, Rc3040sNetworkPorts.FactoryRelayPortValue);
     }
 
     [Fact]

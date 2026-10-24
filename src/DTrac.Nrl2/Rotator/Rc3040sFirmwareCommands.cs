@@ -47,6 +47,14 @@ public static class Rc3040sFirmwareCommands
     public static byte[] SetDns(IPAddress address) => Ipv4("AT+DNS=", address);
 
     /// <summary>
+    /// Writes the firmware's remote NRL2 server destination string (D_IP).
+    /// Factory image stores a 15-character zero-padded IPv4 string at config slot 0x50.
+    /// This command may immediately disconnect Socket7 or require reboot.
+    /// It must NEVER be sent automatically during connection/retry.
+    /// </summary>
+    public static byte[] SetRemoteRelayIp(IPAddress address) => Ipv4("AT+D_IP=", address);
+
+    /// <summary>
     /// A six-character local/relay call-label. The firmware copies a maximum of
     /// six nonterminator characters into XDATA 0x09E2 onward. This is NOT a
     /// cryptographic callsign credential or a rotator RotorID.

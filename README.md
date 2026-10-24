@@ -175,3 +175,7 @@ Firmware AT parser `0x8B2C→0x8E76` reads four 3-digit decimal IPv4 octets. The
 ### Stage 10: bounded device identity AT settings
 
 Static firmware traces show `AT+CALL=` copies up to 6 characters to the device call-label slot, while `AT+SSID=` parses a 3-digit raw byte value (NOT a Wi-Fi network SSID). Opt-in byte-only builders `SetCallsign` and `SetDeviceSsid` now encode these settings. The `AT+D_IP=` suffix is copied to remote-host configuration, but its maximum bounds and response semantics remain unknown; the library deliberately does not provide an unverified arbitrary-length network setter. [Evidence](docs/reverse-engineering/RC3040S_stage10_CALL_SSID_D_IP.md).
+
+### Stage 11: configure a local UDP relay target (offline-only encoder)
+
+The firmware factory init references a zero-padded remote address string at ROM `0x9C33` copied to config slot `0x50`; the `AT+D_IP=` command writes the same string field. `SetRemoteRelayIp(IPAddress)` constructs `AT+D_IP=ddd.ddd.ddd.ddd\\r`, but never sends it. Two factory port words are `0xEA92=60050`; the precise Socket7 role awaits capture. **Never issue AT+INIT to recover a misconfigured relay automatically.** See [stage 11](docs/reverse-engineering/RC3040S_stage11_factory_relay_host.md).
