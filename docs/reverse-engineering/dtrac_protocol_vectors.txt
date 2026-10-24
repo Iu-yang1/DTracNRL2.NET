@@ -1,0 +1,14 @@
+DISCOVERY TX 63 6D 64 3D 70 69 6E 67 0A
+DISCOVERY RX {'type': 'RC-3040S', 'ip': '192.0.2.10', 'port': 60020, 'rotor_id': '123456789ABCDE', 'fields': {'type': 'RC-3040S', 'ip': '192.0.2.10', 'port': '60020', 'rotorid': '123456789ABCDE'}}
+
+Command: b'C2\r\n' 
+Bytes: 4E 52 4C 32 35 32 01 02 03 04 05 06 07 12 34 56 78 9A BC DE 05 00 00 00 44 54 72 61 63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 43 32 0D 0A 
+Decoded: {'length': 52, 'length_bytes_hex': '3532', 'sid': '01020304050607', 'rotor_id': '123456789ABCDE', 'type': 5, 'client_tag': 'DTrac', 'payload_hex': '43320D0A', 'payload_ascii_escaped': 'C2\\r\\n'}
+
+Command: b'W181 030\r\n' 
+Bytes: 4E 52 4C 32 35 38 01 02 03 04 05 06 07 12 34 56 78 9A BC DE 05 00 00 00 44 54 72 61 63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 57 31 38 31 20 30 33 30 0D 0A 
+Decoded: {'length': 58, 'length_bytes_hex': '3538', 'sid': '01020304050607', 'rotor_id': '123456789ABCDE', 'type': 5, 'client_tag': 'DTrac', 'payload_hex': '57313831203033300D0A', 'payload_ascii_escaped': 'W181 030\\r\\n'}
+
+Command: b'S\r\n' 
+Bytes: 4E 52 4C 32 35 31 01 02 03 04 05 06 07 12 34 56 78 9A BC DE 05 00 00 00 44 54 72 61 63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 0D 0A 
+Decoded: {'length': 51, 'length_bytes_hex': '3531', 'sid': '01020304050607', 'rotor_id': '123456789ABCDE', 'type': 5, 'client_tag': 'DTrac', 'payload_hex': '530D0A', 'payload_ascii_escaped': 'S\\r\\n'}

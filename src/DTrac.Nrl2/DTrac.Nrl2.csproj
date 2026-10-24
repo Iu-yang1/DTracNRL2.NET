@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageId>DTrac.Nrl2</PackageId>
+    <AssemblyName>DTrac.Nrl2</AssemblyName>
+    <RootNamespace>DTrac.Nrl2</RootNamespace>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>Iu-yang1</Authors>
+    <Description>Unofficial DTrac-dialect NRL2 codec, RC-3040S discovery and UDP rotator client.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/Iu-yang1/DTracNRL2.NET</RepositoryUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

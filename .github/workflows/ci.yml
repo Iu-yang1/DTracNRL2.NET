@@ -1,0 +1,37 @@
+name: .NET SDK CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sdk:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore tests/DTrac.Nrl2.Tests/DTrac.Nrl2.Tests.csproj
+      - name: Build SDK
+        run: dotnet build src/DTrac.Nrl2/DTrac.Nrl2.csproj --configuration Release
+      - name: Build examples
+        run: dotnet build examples/DTrac.Nrl2.Console/DTrac.Nrl2.Console.csproj --configuration Release
+      - name: Build simulator
+        run: dotnet build src/DTrac.Nrl2.Simulator/DTrac.Nrl2.Simulator.csproj --configuration Release
+      - name: Test
+        run: dotnet test tests/DTrac.Nrl2.Tests/DTrac.Nrl2.Tests.csproj --configuration Release
+      - name: Pack SDK
+        run: dotnet pack src/DTrac.Nrl2/DTrac.Nrl2.csproj --configuration Release --output artifacts
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: DTrac.Nrl2-nupkg
+          path: artifacts/*.nupkg
