@@ -166,6 +166,42 @@ public sealed class WebSocketManagementTests
     }
 
     [Fact]
+    public async Task NormalDisposalSendsWebSocketCloseFrameInsteadOfAbruptAbort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var server = Task.Run(async () =>
+            {
+                using var accepted = await listener.AcceptTcpClientAsync(deadline.Token);
+                var stream = accepted.GetStream();
+                string headers = await ReadHttpHeadersAsync(stream, deadline.Token);
+                string key = headers.Split("\r\n", StringSplitOptions.None)
+                    .First(x => x.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))
+                    .Split(':', 2)[1].Trim();
+                string accept = Convert.ToBase64String(SHA1.HashData(
+                    Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+                await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 101 Switching Protocols\r\n" +
+                    "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+                    "Sec-WebSocket-Accept: " + accept + "\r\n\r\n"), deadline.Token);
+                using var ws = WebSocket.CreateFromStream(stream, true, null, TimeSpan.FromSeconds(20));
+                byte[] buffer = new byte[32];
+                var received = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
+                Assert.Equal(WebSocketMessageType.Close, received.MessageType);
+                await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", deadline.Token);
+            });
+            var client = await Rc3040sWebSocketClient.ConnectAsync("127.0.0.1", port, deadline.Token);
+            await client.DisposeAsync();
+            await server;
+        }
+        finally { listener.Stop(); }
+    }
+
+    [Fact]
     public async Task ClientValidatesHostAndPortBeforeNetworkAccess()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
