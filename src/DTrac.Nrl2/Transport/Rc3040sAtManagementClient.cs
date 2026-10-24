@@ -115,7 +115,7 @@ public sealed class Rc3040sAtManagementClient : IAsyncDisposable
 {
     private readonly Rc3040sWebSocketClient ws;
     private bool disposed;
-    private bool commandAttempted;
+    private int commandAttempted;
 
     private Rc3040sAtManagementClient(Rc3040sWebSocketClient ws) => this.ws = ws;
 
@@ -130,7 +130,7 @@ public sealed class Rc3040sAtManagementClient : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (commandAttempted)
+        if (Volatile.Read(ref commandAttempted) != 0)
             throw new InvalidOperationException("Configuration should be read before any AT write.");
         var burst = await Rc3040sWebSocketCaptures.CaptureReadOnlyC2Async(ws,
             TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(700),
@@ -151,15 +151,14 @@ public sealed class Rc3040sAtManagementClient : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(permit);
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (commandAttempted)
+        if (Interlocked.Exchange(ref commandAttempted, 1) != 0)
             throw new InvalidOperationException("At most one AT configuration operation per connection.");
 
         // Mark before any network I/O to prevent reentrancy or ambiguous retry.
-        commandAttempted = true;
         var config = await ReadConfigurationForWriteAsync(cancellationToken).ConfigureAwait(false);
         if (config.FirmwareVersion is null || !config.SawNetworkSection ||
             config.RecognizedFieldCount < 3)
-            throw new InvalidDataException("Cannot authenticate target firmware from a complete read-only dump.");
+            throw new InvalidDataException("Cannot identify target firmware from a complete read-only dump.");
         byte[] command = permit.ConsumeExactlyOnce(config.FirmwareVersion);
 
         // Exact one-time operator-approved AT text command. Firmware receipt and
@@ -181,13 +180,23 @@ public sealed class Rc3040sAtManagementClient : IAsyncDisposable
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { break; }
             catch (WebSocketException) { break; } // RESET may sever connection immediately.
             if (frame is null) break;
-            observed.Add(Rc3040sFirmwareBanner.RedactDeviceIds(frame));
+            observed.Add(RedactAtResponse(frame));
         }
         return new Rc3040sAtDispatchObservation(
             permit.Operation, config.FirmwareVersion, true, observed.AsReadOnly(),
             DeviceAcknowledgementVerified: false,
             PersistentSettingVerified: false,
             ReadbackAvailable: false);
+    }
+
+    private static string RedactAtResponse(string value)
+    {
+        string masked = Rc3040sFirmwareBanner.RedactDeviceIds(value);
+        masked = Regex.Replace(masked, @"(?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b",
+            match => "**:**:**:**:" + match.Value[^5..]);
+        return Regex.Replace(masked,
+            @"(?im)(AT\+(?:CALL|SSID|PASS|PASSWORD|KEY)\s*=)[^\r\n]*",
+            "$1[REDACTED]");
     }
 
     private async Task<Rc3040sConfigurationSnapshot> ReadConfigurationForWriteAsync(
