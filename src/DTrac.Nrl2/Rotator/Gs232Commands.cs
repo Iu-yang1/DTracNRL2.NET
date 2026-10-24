@@ -15,6 +15,16 @@ public static class Gs232Commands
 
     public static byte[] Query() => "C2\r\n"u8.ToArray();
     public static byte[] Stop() => "S\r\n"u8.ToArray();
+    public static byte[] QueryAzimuth() => "C\r\n"u8.ToArray();
+    public static byte[] QueryElevation() => "B\r\n"u8.ToArray();
+    public static byte[] StopAzimuth() => "A\r\n"u8.ToArray();
+    public static byte[] StopElevation() => "E\r\n"u8.ToArray();
+
+    public static byte[] MoveAzimuth(int azimuth)
+    {
+        if (azimuth is < 0 or > 450) throw new ArgumentOutOfRangeException(nameof(azimuth));
+        return Encoding.ASCII.GetBytes(FormattableString.Invariant($"M{azimuth:000}\r\n"));
+    }
 
     public static byte[] MoveTo(RotatorPosition position)
     {

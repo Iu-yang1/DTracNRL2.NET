@@ -55,6 +55,30 @@ GS-232 and have not been proven available on TCP/60020 or NRL2 Type5**.
 `Rc3040sFirmwareCommands` builds these commands for isolated testing
 but does not transmit or pretend the raw speed setting means degrees/s.
 
+## Standalone UDP-to-TCP LAN gateway
+
+`DTrac.Nrl2.Relay.Nrl2TcpGateway` is an alternative when RC-3040S Socket 7
+cannot be reconfigured: it accepts **DTrac NRL2 Type5 over local UDP** and
+translates requests into the firmware's native **GS-232 TCP/60020** protocol.
+No private/public NRL relay, server registration or device Socket7 configuration
+is required. This is a gateway, **not native UDP/60059 motion control**.
+
+An executable .NET relay host is built in CI:
+
+```bash
+# Listens on localhost only; read-only queries + STOP by default
+dotnet run --project src/DTrac.Nrl2.Host -- --tcp-gateway 127.0.0.1 19021 123456789ABCDE 192.0.2.10
+# Experimental firmware Socket7 Type2+Type5 UDP relay; requires board service endpoint configuration
+dotnet run --project src/DTrac.Nrl2.Host -- --native-relay 127.0.0.1 19021 123456789ABCDE 127.0.0.1
+```
+
+IDs and IPs above are examples only. When enabling motion in a trusted, isolated
+environment, append `--enable-motion` and use real mechanical limits and STOP.
+The TCP gateway requires a recent valid C2 read before target motion, and
+rejects open-ended jog commands. **Neither mode provides authenticated
+operator commands, a proven watchdog, or motor ACKs.** Do not deploy exposed
+to other LAN hosts without strict firewalling and independent physical fail-safe.
+
 ## LAN-only use (no DTrac relay needed)
 
 Firmware static analysis shows a separate, direct GS-232 TCP listener on port 60020.

@@ -26,6 +26,8 @@ jobs:
         run: dotnet build examples/DTrac.Nrl2.Console/DTrac.Nrl2.Console.csproj --configuration Release
       - name: Build simulator
         run: dotnet build src/DTrac.Nrl2.Simulator/DTrac.Nrl2.Simulator.csproj --configuration Release
+      - name: Build relay host
+        run: dotnet build src/DTrac.Nrl2.Host/DTrac.Nrl2.Host.csproj --configuration Release
       - name: Test
         run: dotnet test tests/DTrac.Nrl2.Tests/DTrac.Nrl2.Tests.csproj --configuration Release
       - name: Pack SDK

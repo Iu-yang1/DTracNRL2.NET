@@ -105,6 +105,16 @@ public sealed class Rc3040sLanClient : IDisposable
     public Task MoveToAsync(RotatorPosition position, CancellationToken cancellationToken = default) =>
         SendAsync(Gs232Commands.MoveTo(position), cancellationToken);
 
+    /// <summary>Explicit AZ-only target; caller must verify safe travel limits.</summary>
+    public Task MoveAzimuthAsync(int azimuth, CancellationToken cancellationToken = default) =>
+        SendAsync(Gs232Commands.MoveAzimuth(azimuth), cancellationToken);
+
+    public Task StopAzimuthAsync(CancellationToken cancellationToken = default) =>
+        SendAsync(Gs232Commands.StopAzimuth(), cancellationToken);
+
+    public Task StopElevationAsync(CancellationToken cancellationToken = default) =>
+        SendAsync(Gs232Commands.StopElevation(), cancellationToken);
+
     /// <summary>Explicit manual jog. Requires a corresponding STOP on release.</summary>
     public Task JogAsync(JogDirection direction, CancellationToken cancellationToken = default) =>
         SendAsync(Gs232Commands.Jog(direction), cancellationToken);
