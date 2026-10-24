@@ -38,7 +38,9 @@
 | `speedThreshold` | **1** | `Lw00.onClick` (`0x12B7E0`) 中与默认字符串 `15` 一起写入偏好设置，不能认定为加速度上限 |
 | `trackingAccuracy` | 运行时设置键 **1**（另有资源名） | `Lw00.onClick` 默认 `3`；`Setup.Y` 获取 UI Preference。它可表示目标误差容限，不能据此称作 JERK |
 | `accelerate` / `maxAcceleration` / `AccelerateDecelerateInterpolator` | 存在若干引用 | 主体属于 **AndroidX MotionLayout / Material 界面动画**资源/类，不能拿来当电机运动规划器 |
-| 中文“加速”“减速”“梯形”“曲线” | 直接字面量未发现 | 不等于混淆后算法不存在 |
+| DEX 中中文“加速”“减速”“梯形”“曲线” | 控制 DEX 未发现这些直接字面量 | 不等于混淆后算法不存在 |
+| `resources.arsc` 中的“加速度计” | **存在**，但位于隐私/传感器说明 | 内容为“设备传感器（陀螺仪 / 加速度计）”，是手机姿态测量，**不是电机加速规划** |
+| `resources.arsc` 中的 `maxAcceleration` | **存在**，属于 AndroidX MotionLayout 属性名 | 是界面手势/动画参数，不是 RC-3040S AZ/EL 速度设置 |
 
 **特别注意**：`speedThreshold = "15"` 出现在恢复/初始化设置路径，不能自动解释成“角度剩余 15° 开始减速”。本次没有恢复出该阈值与 AZ/EL 电机速度写入之间的调用链。
 
