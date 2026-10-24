@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using DTrac.Nrl2.Protocol;
@@ -76,12 +77,57 @@ public static class Rc3040sDiscovery
     }
 
     /// <summary>
-    /// Broadcast discovery is not reliable on every firmware/network combination.
-    /// Prefer DiscoverAtAsync when the actual device IP is already known.
+    /// Real RC-3040S firmware 260223_C responded to a subnet-directed broadcast
+    /// but not the limited broadcast 255.255.255.255. Probe local IPv4 subnets,
+    /// preserving the historical limited-broadcast fallback.
     /// </summary>
     public static Task<IReadOnlyList<DiscoveredRotor>> DiscoverAsync(
-        TimeSpan timeout, CancellationToken cancellationToken = default) =>
-        DiscoverCoreAsync(IPAddress.Broadcast, null, timeout, cancellationToken);
+        TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        var adapters = new List<(IPAddress Address, IPAddress Mask)>();
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up ||
+                    nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                foreach (var unicast in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+                        unicast.IPv4Mask is not null)
+                        adapters.Add((unicast.Address, unicast.IPv4Mask));
+                }
+            }
+        }
+        catch (NetworkInformationException) { /* limited broadcast fallback */ }
+        var destinations = GetSubnetBroadcastTargets(adapters).ToList();
+        destinations.Add(IPAddress.Broadcast);
+        return DiscoverCoreAsync(destinations, null, timeout, cancellationToken);
+    }
+
+    /// <summary>Computes IPv4 subnet broadcasts from explicit local interfaces, without assuming /24.</summary>
+    public static IReadOnlyList<IPAddress> GetSubnetBroadcastTargets(
+        IEnumerable<(IPAddress Address, IPAddress Mask)> adapters)
+    {
+        ArgumentNullException.ThrowIfNull(adapters);
+        var results = new HashSet<IPAddress>();
+        foreach (var (address, maskAddress) in adapters)
+        {
+            if (address.AddressFamily != AddressFamily.InterNetwork ||
+                maskAddress.AddressFamily != AddressFamily.InterNetwork) continue;
+            var ip = address.GetAddressBytes();
+            var mask = maskAddress.GetAddressBytes();
+            int fixedBits = 0;
+            foreach (byte m in mask) fixedBits += System.Numerics.BitOperations.PopCount((uint)m);
+            // /31 and /32 have no conventional directed broadcast.
+            if (fixedBits is < 1 or > 30) continue;
+            byte[] broadcast = new byte[4];
+            for (int i = 0; i < 4; i++)
+                broadcast[i] = (byte)((ip[i] & mask[i]) | ~mask[i]);
+            results.Add(new IPAddress(broadcast));
+        }
+        return results.OrderBy(x => x.ToString(), StringComparer.Ordinal).ToArray();
+    }
 
     /// <summary>
     /// Sends only the official read-only UDP/60059 cmd=ping to a known IPv4 peer.
@@ -93,11 +139,11 @@ public static class Rc3040sDiscovery
         ArgumentNullException.ThrowIfNull(device);
         if (device.AddressFamily != AddressFamily.InterNetwork)
             throw new ArgumentException("The RC-3040S discovery protocol uses IPv4.", nameof(device));
-        return DiscoverCoreAsync(device, device, timeout, cancellationToken);
+        return DiscoverCoreAsync([device], device, timeout, cancellationToken);
     }
 
     private static async Task<IReadOnlyList<DiscoveredRotor>> DiscoverCoreAsync(
-        IPAddress destination, IPAddress? expectedSource, TimeSpan timeout,
+        IReadOnlyCollection<IPAddress> destinations, IPAddress? expectedSource, TimeSpan timeout,
         CancellationToken cancellationToken)
     {
         if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMinutes(1))
@@ -105,7 +151,20 @@ public static class Rc3040sDiscovery
         using var socket = new UdpClient(AddressFamily.InterNetwork);
         socket.EnableBroadcast = true;
         socket.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
-        await socket.SendAsync(CreatePing(), new IPEndPoint(destination, DiscoveryPort), cancellationToken);
+        int sent = 0;
+        SocketException? error = null;
+        foreach (IPAddress destination in destinations)
+        {
+            try
+            {
+                await socket.SendAsync(CreatePing(),
+                    new IPEndPoint(destination, DiscoveryPort), cancellationToken);
+                sent++;
+            }
+            catch (SocketException ex) { error = ex; }
+        }
+        if (sent == 0)
+            throw new IOException("No UDP/60059 discovery broadcast was sent successfully.", error);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeout);
         var found = new Dictionary<string, DiscoveredRotor>(StringComparer.OrdinalIgnoreCase);
