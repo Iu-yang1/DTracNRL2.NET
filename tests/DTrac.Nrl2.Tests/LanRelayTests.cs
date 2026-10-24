@@ -39,6 +39,23 @@ public sealed class LanRelayTests
     }
 
     [Fact]
+    public void FirmwareConfigurationBuildersAreOptInAndExact()
+    {
+        Assert.Equal("AT+DHCP=ON\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetDhcp(true)));
+        Assert.Equal("AT+DHCP=OFF\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetDhcp(false)));
+        Assert.Equal("AT+YT=YS3051\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SelectModel(Rc3040sFirmwareModel.Ys3051)));
+        Assert.Equal("AT+P450\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SelectAzimuthTravel(true)));
+        Assert.Equal("AT+INIT\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.InitializeDefaults()));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Rc3040sFirmwareCommands.SelectModel((Rc3040sFirmwareModel)99));
+    }
+
+    [Fact]
     public async Task OfflineType2RegistersFirmwareAndRoutesBidirectionally()
     {
         using var relay = new Nrl2LanRelay(new IPEndPoint(IPAddress.Loopback, 0),

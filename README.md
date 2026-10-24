@@ -155,3 +155,5 @@ optional unsolicited status message. It does **not** send an AT, movement,
 speed, DEMO or EEPROM write command. The sample IP is documentation-only;
 replace with the board's actual LAN IP. Complete the test with motor power
 isolated initially; a successful handshake does not validate configuration writes.
+
+[Full firmware AT command recognition matrix and evidence status](docs/reverse-engineering/RC3040S_AT_command_matrix.md).
