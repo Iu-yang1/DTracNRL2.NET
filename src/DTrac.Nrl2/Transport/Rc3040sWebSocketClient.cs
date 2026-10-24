@@ -45,9 +45,16 @@ public sealed class Rc3040sWebSocketClient : IAsyncDisposable
 
     public WebSocketState State => socket.State;
 
+    // Keep one receive operation pending across caller-side timeouts. Cancelling a
+    // ClientWebSocket.ReceiveAsync can abort the socket; a diagnostic must be able
+    // to wait passively, send a query, and still receive on the SAME connection.
+    private Task<string?>? pendingRead;
+
     /// <summary>
-    /// Returns one received text message, or null when the peer closes.
-    /// This is a raw application message (welcome/status/errors), not a position/motor ACK.
+    /// Returns one received text message, or null when the peer closes or the
+    /// caller-side deadline elapses. A timeout does NOT cancel or abort the
+    /// underlying WebSocket ReceiveAsync; a later call can collect its result.
+    /// This is raw application text, not a command acknowledgement.
     /// </summary>
     public async Task<string?> ReceiveTextAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
@@ -57,32 +64,40 @@ public sealed class Rc3040sWebSocketClient : IAsyncDisposable
         await receiveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(timeout);
-            byte[] buffer = new byte[512];
-            using var assembled = new MemoryStream();
+            pendingRead ??= ReceiveMessageCoreAsync();
             try
             {
-                while (true)
-                {
-                    var result = await socket.ReceiveAsync(
-                        new ArraySegment<byte>(buffer), cts.Token).ConfigureAwait(false);
-                    if (result.MessageType == WebSocketMessageType.Close) return null;
-                    if (result.MessageType != WebSocketMessageType.Text)
-                        throw new InvalidDataException("Unexpected non-text management message.");
-                    if (assembled.Length + result.Count > MaximumMessageBytes)
-                        throw new InvalidDataException("WebSocket management reply exceeds safe bound.");
-                    assembled.Write(buffer, 0, result.Count);
-                    if (result.EndOfMessage)
-                        return new UTF8Encoding(false, true).GetString(assembled.ToArray());
-                }
+                string? message = await pendingRead.WaitAsync(timeout, cancellationToken)
+                    .ConfigureAwait(false);
+                pendingRead = null;
+                return message;
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (TimeoutException)
             {
+                // WaitAsync times out only the waiter, preserving pendingRead.
                 return null;
             }
         }
         finally { receiveGate.Release(); }
+    }
+
+    private async Task<string?> ReceiveMessageCoreAsync()
+    {
+        byte[] buffer = new byte[512];
+        using var assembled = new MemoryStream();
+        while (true)
+        {
+            var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer),
+                CancellationToken.None).ConfigureAwait(false);
+            if (result.MessageType == WebSocketMessageType.Close) return null;
+            if (result.MessageType != WebSocketMessageType.Text)
+                throw new InvalidDataException("Unexpected non-text management message.");
+            if (assembled.Length + result.Count > MaximumMessageBytes)
+                throw new InvalidDataException("WebSocket management reply exceeds safe bound.");
+            assembled.Write(buffer, 0, result.Count);
+            if (result.EndOfMessage)
+                return new UTF8Encoding(false, true).GetString(assembled.ToArray());
+        }
     }
 
     /// <summary>

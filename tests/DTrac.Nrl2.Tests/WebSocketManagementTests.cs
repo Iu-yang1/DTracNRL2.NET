@@ -64,6 +64,46 @@ public sealed class WebSocketManagementTests
     }
 
     [Fact]
+    public async Task PassiveReadTimeoutDoesNotDiscardLaterReplyOrAbortWebSocket()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var server = Task.Run(async () =>
+        {
+            using var accepted = await listener.AcceptTcpClientAsync(cts.Token);
+            var stream = accepted.GetStream();
+            string headers = await ReadHttpHeadersAsync(stream, cts.Token);
+            string key = headers.Split("\r\n", StringSplitOptions.None)
+                .First(line => line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))
+                .Split(':', 2)[1].Trim();
+            string accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(
+                key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+                "Sec-WebSocket-Accept: " + accept + "\r\n\r\n"), cts.Token);
+            using var ws = WebSocket.CreateFromStream(stream, true, null, TimeSpan.FromSeconds(20));
+            await Task.Delay(180, cts.Token);
+            await ws.SendAsync("welcome"u8.ToArray(), WebSocketMessageType.Text, true, cts.Token);
+            byte[] buffer = new byte[64];
+            var incoming = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+            Assert.Equal("C2\r", Encoding.ASCII.GetString(buffer, 0, incoming.Count));
+            await ws.SendAsync("RC_3040S_67S_8H_260223_C A1B2C3D4E5F607\r\n"u8.ToArray(),
+                WebSocketMessageType.Text, true, cts.Token);
+        });
+        await using var client = await Rc3040sWebSocketClient.ConnectAsync("127.0.0.1", port, cts.Token);
+        Assert.Null(await client.ReceiveTextAsync(TimeSpan.FromMilliseconds(50), cts.Token));
+        Assert.Equal(WebSocketState.Open, client.State);
+        Assert.Equal("welcome", await client.ReceiveTextAsync(TimeSpan.FromSeconds(2), cts.Token));
+        await client.SendTextAsync("C2\r", cancellationToken: cts.Token);
+        string? result = await client.ReceiveTextAsync(TimeSpan.FromSeconds(2), cts.Token);
+        Assert.StartsWith("RC_3040S_67S_8H_260223_C", result);
+        await server;
+    }
+
+    [Fact]
     public async Task ClientValidatesHostAndPortBeforeNetworkAccess()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
