@@ -100,14 +100,14 @@ public sealed class GatewayTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var simulatedHardware = Task.Run(async () =>
         {
-            using (var first = await listener.AcceptTcpClientAsync(cancellation.Token))
-            {
-                byte[] command = new byte[3];
-                await first.GetStream().ReadExactlyAsync(command, cancellation.Token);
-                Assert.Equal("C2\r", Encoding.ASCII.GetString(command));
-                // Deliberately withhold a response past the gateway's timeout.
-                await Task.Delay(350, cancellation.Token);
-            }
+            // Keep the first connection open without answering it, but accept the
+            // second request immediately after the gateway reports the first timeout.
+            // Waiting longer than operationTimeout here would incorrectly starve
+            // the second query and test the harness rather than recovery behavior.
+            using var first = await listener.AcceptTcpClientAsync(cancellation.Token);
+            byte[] command = new byte[3];
+            await first.GetStream().ReadExactlyAsync(command, cancellation.Token);
+            Assert.Equal("C2\r", Encoding.ASCII.GetString(command));
             using var second = await listener.AcceptTcpClientAsync(cancellation.Token);
             byte[] otherCommand = new byte[3];
             await second.GetStream().ReadExactlyAsync(otherCommand, cancellation.Token);
