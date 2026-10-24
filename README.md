@@ -143,3 +143,15 @@ is available for an *isolated, authorized hardware test* and may write EEPROM.
 The first fully confirmed application-level request/response pairs have **not**
 yet been captured, so **do not** infer successful configuration from a WebSocket
 send. See [stage 6 evidence](docs/reverse-engineering/RC3040S_firmware_stage6_websocket.md).
+
+### Non-invasive management handshake check
+
+```powershell
+dotnet run --project examples/DTrac.Nrl2.Console -- --management-status 192.0.2.10
+```
+
+This command only opens a WebSocket connection to TCP/60030 and reads one
+optional unsolicited status message. It does **not** send an AT, movement,
+speed, DEMO or EEPROM write command. The sample IP is documentation-only;
+replace with the board's actual LAN IP. Complete the test with motor power
+isolated initially; a successful handshake does not validate configuration writes.
