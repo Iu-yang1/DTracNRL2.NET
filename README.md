@@ -112,14 +112,6 @@ var position = await client.QueryPositionAsync(TimeSpan.FromSeconds(2));
 
 The IDs above are **fictional**. `127.0.0.1:19120` is only the local simulator, never a default Internet relay. The client will not send any command until explicitly invoked.
 
-## Documentation
-
-- [English technical notes](docs/en/protocol.md)
-- [中文协议与安全说明](docs/zh-CN/protocol.md)
-- [Reverse-engineering evidence and offline test vectors](docs/reverse-engineering/)
-
-**Limitations:** DTrac's production relay registration, routing, NAT keepalive, authentication, stale-message protection and hardware acknowledgements have not been experimentally verified. Generic `hicaoc/nrllink` is known to reject the observed `DTrac` client tag. Firmware acceleration/deceleration is not reimplemented by this library. `AT+RESET` is experimental and never sent implicitly. The UDP transport cannot provide physical STOP guarantees.
-
 ### License
 
 MIT for this independent implementation. The reverse-engineering notes describe interoperability findings, without shipping proprietary APK or firmware binaries.
