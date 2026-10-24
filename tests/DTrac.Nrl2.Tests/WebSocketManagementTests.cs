@@ -54,6 +54,8 @@ public sealed class WebSocketManagementTests
                 await client.ReceiveTextAsync(TimeSpan.FromSeconds(2), deadline.Token));
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 client.SendFirmwareCommandAsync(Rc3040sFirmwareCommands.SetAzimuthSpeed(300), false));
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                client.SendTextAsync("AT+AZ_SPD=00300\r", cancellationToken: deadline.Token));
             await client.SendFirmwareCommandAsync(
                 Rc3040sFirmwareCommands.SetAzimuthSpeed(300), true, deadline.Token);
             await server;

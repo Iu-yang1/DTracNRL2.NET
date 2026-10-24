@@ -89,10 +89,17 @@ public sealed class Rc3040sWebSocketClient : IAsyncDisposable
     /// Send an explicitly selected plain-text WebSocket payload. Firmware application
     /// semantics are NOT fully verified. This method never infers success from SendAsync.
     /// </summary>
-    public async Task SendTextAsync(string payload, CancellationToken cancellationToken = default)
+    public async Task SendTextAsync(string payload,
+        bool confirmPossibleHardwareEffects = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(payload);
         ObjectDisposedException.ThrowIf(disposed, this);
+        // This is not an authenticated network API. Permit known read-only GS-232
+        // requests without confirmation; everything else, including AT and movement,
+        // explicitly requires operator authorization.
+        if (!confirmPossibleHardwareEffects && payload is not (
+            "C2\r" or "C2\r\n" or "C\r" or "C\r\n" or "B\r" or "B\r\n"))
+            throw new InvalidOperationException("WebSocket text may change hardware; explicit confirmation is required.");
         byte[] data = new UTF8Encoding(false, true).GetBytes(payload);
         if (data.Length is < 1 or > 256)
             throw new ArgumentOutOfRangeException(nameof(payload), "Unverified firmware frame size; cap payload at 256 bytes.");
@@ -121,7 +128,7 @@ public sealed class Rc3040sWebSocketClient : IAsyncDisposable
             command.AsSpan().IndexOf((byte)'\n') >= 0 ||
             command.Any(b => b != '\r' && (b < 32 || b > 126)))
             throw new ArgumentException("Only bounded printable CR-terminated AT commands are accepted.", nameof(command));
-        return SendTextAsync(Encoding.ASCII.GetString(command), cancellationToken);
+        return SendTextAsync(Encoding.ASCII.GetString(command), true, cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
