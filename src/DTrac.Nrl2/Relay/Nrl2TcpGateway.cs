@@ -23,6 +23,7 @@ public sealed class Nrl2TcpGateway : IDisposable
     private readonly bool allowMotorCommands;
     private readonly int maxAzimuth;
     private readonly int maxElevation;
+    private readonly TimeSpan operationTimeout;
     private readonly Dictionary<(string Sid, string Endpoint), DateTimeOffset> lastFreshPosition = new();
     private bool disposed;
 
@@ -33,7 +34,8 @@ public sealed class Nrl2TcpGateway : IDisposable
     /// <param name="allowMotorCommands">False by default. The operator must enable movement deliberately.</param>
     public Nrl2TcpGateway(IPEndPoint listen, string rotorId, string controllerHost,
         int controllerPort = Rc3040sLanClient.DefaultPort,
-        bool allowMotorCommands = false, int maxAzimuth = 360, int maxElevation = 90)
+        bool allowMotorCommands = false, int maxAzimuth = 360, int maxElevation = 90,
+        TimeSpan? operationTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(listen);
         if (listen.AddressFamily != AddressFamily.InterNetwork)
@@ -49,6 +51,10 @@ public sealed class Nrl2TcpGateway : IDisposable
         this.allowMotorCommands = allowMotorCommands;
         this.maxAzimuth = maxAzimuth;
         this.maxElevation = maxElevation;
+        this.operationTimeout = operationTimeout ?? TimeSpan.FromSeconds(3);
+        if (this.operationTimeout < TimeSpan.FromMilliseconds(100) ||
+            this.operationTimeout > TimeSpan.FromMinutes(1))
+            throw new ArgumentOutOfRangeException(nameof(operationTimeout));
         udp = new UdpClient(listen);
     }
 
@@ -63,6 +69,12 @@ public sealed class Nrl2TcpGateway : IDisposable
             try { packet = await udp.ReceiveAsync(cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             try { await HandleAsync(packet, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Cancellation was caused by the per-command hardware deadline, NOT
+                // termination of this UDP listener. Preserve service availability.
+                TransportFailure?.Invoke(new TimeoutException("RC-3040S TCP operation timed out."));
+            }
             catch (Exception ex) when (ex is SocketException or IOException or TimeoutException)
             {
                 TransportFailure?.Invoke(ex);
@@ -80,12 +92,34 @@ public sealed class Nrl2TcpGateway : IDisposable
             return;
 
         string command = Encoding.ASCII.GetString(request.Payload);
+        bool query = command is "C2\r\n" or "C\r\n" or "B\r\n";
+        bool stop = command == "S\r\n";
+        bool move = command.Length == 10 && command[0] == 'W';
+        bool azimuthOnly = command.Length == 6 && command[0] == 'M';
+        if (!query && !stop)
+        {
+            // Perform all authorization and mechanical range checks BEFORE any
+            // new TCP connection is established. Never retry unauthorized motion.
+            if (!allowMotorCommands || (!move && !azimuthOnly) ||
+                !lastFreshPosition.TryGetValue((request.SourceId, packet.RemoteEndPoint.ToString()), out var seenAt) ||
+                DateTimeOffset.UtcNow - seenAt > TimeSpan.FromSeconds(3))
+                return;
+            if (move)
+            {
+                int azCheck = int.Parse(command.AsSpan(1, 3), CultureInfo.InvariantCulture);
+                int elCheck = int.Parse(command.AsSpan(5, 3), CultureInfo.InvariantCulture);
+                if (azCheck > maxAzimuth || elCheck > maxElevation) return;
+            }
+            if (azimuthOnly && int.Parse(command.AsSpan(1, 3), CultureInfo.InvariantCulture) > maxAzimuth)
+                return;
+        }
+
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        deadline.CancelAfter(operationTimeout);
         using var controller = await Rc3040sLanClient.ConnectAsync(
             controllerHost, controllerPort, deadline.Token).ConfigureAwait(false);
 
-        if (command is "C2\r\n" or "C\r\n" or "B\r\n")
+        if (query)
         {
             var position = await controller.QueryPositionAsync(TimeSpan.FromSeconds(2), deadline.Token)
                 .ConfigureAwait(false);
@@ -107,22 +141,16 @@ public sealed class Nrl2TcpGateway : IDisposable
             return;
         }
 
-        if (command == "S\r\n")
+        if (stop)
         {
             await controller.StopAsync(deadline.Token).ConfigureAwait(false);
             lastFreshPosition.Remove((request.SourceId, packet.RemoteEndPoint.ToString()));
             return;
         }
 
-        // A successful C2 on this gateway from the SAME UDP endpoint within 3 seconds
-        // is a prerequisite to new motion; matching SID alone does not confer authority.
-        // The application must still enforce real mechanical limits and provide physical STOP.
-        if (!allowMotorCommands ||
-            !lastFreshPosition.TryGetValue((request.SourceId, packet.RemoteEndPoint.ToString()), out var seenAt) ||
-            DateTimeOffset.UtcNow - seenAt > TimeSpan.FromSeconds(3))
-            return;
-
-        if (command.Length == 10 && command[0] == 'W')
+        // C2 freshness, UDP endpoint binding and mechanical limits were checked
+        // BEFORE this TCP session was opened. Physical STOP is still mandatory.
+        if (move)
         {
             int az = int.Parse(command.AsSpan(1, 3), CultureInfo.InvariantCulture);
             int el = int.Parse(command.AsSpan(5, 3), CultureInfo.InvariantCulture);
@@ -131,7 +159,7 @@ public sealed class Nrl2TcpGateway : IDisposable
             lastFreshPosition.Remove((request.SourceId, packet.RemoteEndPoint.ToString()));
             return;
         }
-        if (command.Length == 6 && command[0] == 'M')
+        if (azimuthOnly)
         {
             int az = int.Parse(command.AsSpan(1, 3), CultureInfo.InvariantCulture);
             if (az > maxAzimuth) return;

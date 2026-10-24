@@ -92,6 +92,55 @@ public sealed class GatewayTests
     }
 
     [Fact]
+    public async Task AStalledControllerTimesOutWithoutKillingUdpGateway()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var simulatedHardware = Task.Run(async () =>
+        {
+            using (var first = await listener.AcceptTcpClientAsync(cancellation.Token))
+            {
+                byte[] command = new byte[3];
+                await first.GetStream().ReadExactlyAsync(command, cancellation.Token);
+                Assert.Equal("C2\r", Encoding.ASCII.GetString(command));
+                // Deliberately withhold a response past the gateway's timeout.
+                await Task.Delay(350, cancellation.Token);
+            }
+            using var second = await listener.AcceptTcpClientAsync(cancellation.Token);
+            byte[] otherCommand = new byte[3];
+            await second.GetStream().ReadExactlyAsync(otherCommand, cancellation.Token);
+            Assert.Equal("C2\r", Encoding.ASCII.GetString(otherCommand));
+            await second.GetStream().WriteAsync("AZ=182  EL=040\r\n"u8.ToArray(), cancellation.Token);
+        });
+        using var gateway = new Nrl2TcpGateway(
+            new IPEndPoint(IPAddress.Loopback, 0), Rotor, "127.0.0.1", port,
+            operationTimeout: TimeSpan.FromMilliseconds(150));
+        var error = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.TransportFailure += ex => error.TrySetResult(ex);
+        Task running = gateway.RunAsync(cancellation.Token);
+        try
+        {
+            using var app = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            await app.SendAsync(Nrl2Frame.Encode(Sid, Rotor, Gs232Commands.Query()),
+                gateway.LocalEndPoint);
+            Exception failure = await error.Task.WaitAsync(TimeSpan.FromSeconds(2), cancellation.Token);
+            Assert.IsType<TimeoutException>(failure);
+            Assert.False(running.IsCompleted);
+
+            await app.SendAsync(Nrl2Frame.Encode(Sid, Rotor, Gs232Commands.Query()),
+                gateway.LocalEndPoint);
+            var reply = await app.ReceiveAsync(cancellation.Token);
+            Assert.True(Nrl2Frame.TryDecodeReply(reply.Buffer, Sid, Rotor, out var body));
+            Assert.True(Gs232Commands.TryParsePosition(body, out var pos));
+            Assert.Equal(new RotatorPosition(182, 40), pos);
+            await simulatedHardware;
+        }
+        finally { cancellation.Cancel(); await running; }
+    }
+
+    [Fact]
     public void GatewayRequiresExplicitPhysicalTravelBounds()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new Nrl2TcpGateway(
