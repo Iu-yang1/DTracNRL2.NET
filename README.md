@@ -200,3 +200,22 @@ checks, passive WebSocket status and one UDP discovery ping. It never sends moti
 
 **[中文图文步骤：免安装 Windows 诊断程序](docs/portable-diagnostic-zh-CN.md)**
 **[Download latest CI artifact](https://github.com/Iu-yang1/DTracNRL2.NET/actions/workflows/ci.yml)**
+
+## Real hardware progress: RC_3040S_67S_8H_260223_C (2026-10-24)
+
+Operator-provided diagnostics confirm **TCP/60020 GS-232 C2 position query**,
+**TCP/60030 RFC6455 WebSocket upgrade**, and **UDP/60059 subnet-broadcast and
+unicast discovery**. WebSocket text following a C2 request includes a multi-frame
+firmware banner and NET SETUP dump with AT+IP/GATEWAY/MASK/PHY/DNS/DHCP and
+AT+D_IP configuration values. **This is a read-only status dump, NOT an AT-write
+acknowledgement or proof of motor command acceptance.** The observed actual
+firmware is `260223_C`, newer than the reverse-engineered `251217` ROM.
+
+The SDK now has `Rc3040sWebSocketCaptures.CaptureReadOnlyC2Async` for one-C2,
+bounded multi-frame capture and `Rc3040sConfigurationDump.Parse` for structured
+read-only configuration values; MAC addresses are masked in snapshots and
+portable diagnostic output. The one-click diagnostic v5 captures the full burst
+before declaring the transaction idle, avoiding v4's interleaved second C2.
+
+See [real hardware interop results](docs/reverse-engineering/RC3040S_260223_real_hardware_interop.md)
+and [no-install diagnostic](docs/portable-diagnostic-zh-CN.md).
