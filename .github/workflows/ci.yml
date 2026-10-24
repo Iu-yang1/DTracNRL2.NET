@@ -37,3 +37,31 @@ jobs:
         with:
           name: DTrac.Nrl2-nupkg
           path: artifacts/*.nupkg
+
+  diagnostic-win-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish no-install RC-3040S diagnostic EXE
+        shell: pwsh
+        run: |
+          dotnet publish src/DTrac.Nrl2.Diagnostic/DTrac.Nrl2.Diagnostic.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path dist/RC3040S-Diagnostic.exe)) { throw "Missing portable EXE" }
+      - name: Offline diagnostic smoke test (no network)
+        shell: pwsh
+        run: |
+          & dist/RC3040S-Diagnostic.exe --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Show SHA256
+        shell: pwsh
+        run: Get-FileHash dist/RC3040S-Diagnostic.exe -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RC3040S-Diagnostic-Windows-x64
+          path: dist/RC3040S-Diagnostic.exe
+          if-no-files-found: error
+          retention-days: 30
