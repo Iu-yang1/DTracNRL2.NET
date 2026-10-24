@@ -42,7 +42,7 @@ internal static class Program
             return 0;
         }
 
-        Write("RC-3040S 局域网只读诊断 / LAN diagnostics v4 — 一键只读诊断");
+        Write("RC-3040S 局域网只读诊断 / LAN diagnostics v5 — 多帧配置读取");
         Write("无需 Git、Python、Visual Studio 或 .NET SDK。");
         Write("不会发送旋转、速度设置、复位或 EEPROM 写入命令。");
         Write("建议先暂停 SkyRoof 自动跟踪，避免竞争 TCP 连接。");
@@ -79,7 +79,7 @@ internal static class Program
         Write($"目标控制板 IP：{host}");
         Write($"开始时间：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
         Write("本次执行全部非破坏性协议测试；不再需要逐项确认。");
-        Write("仅发送 GS-232 C2 一次、WebSocket C2 两次、UDP 全网广播/子网广播/单播各一次。");
+        Write("仅发送 GS-232 C2 一次、WebSocket C2 一次、UDP 全网广播/子网广播/单播各一次。");
         Write("");
 
         var overall = Stopwatch.StartNew();
@@ -128,7 +128,7 @@ internal static class Program
 
     private static async Task CheckWebSocketFullAsync(IPAddress host)
     {
-        Write("[WebSocket/60030] 同会话测试：握手 → 5 秒被动观察 → C2#1 → C2#2");
+        Write("[WebSocket/60030] 同会话：握手 → 5 秒无发送观察 → 一次只读 C2 → 整批多帧收集");
         using var total = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         try
         {
@@ -137,22 +137,37 @@ internal static class Program
                 host.ToString(), 60030, total.Token);
             Write($"[WebSocket/60030] RFC6455 HANDSHAKE OK (+{elapsed.ElapsedMilliseconds}ms)");
             string? unsolicited = await ws.ReceiveTextAsync(TimeSpan.FromSeconds(5), total.Token);
-            LogWebSocket("无查询等待5秒", unsolicited, elapsed.ElapsedMilliseconds);
+            if (unsolicited is not null)
+                Write($"[WebSocket/60030] 无查询时收到消息: {RedactConfiguration(unsolicited, 300)}");
+            else
+                Write("[WebSocket/60030] 5秒内未观察到主动消息");
 
-            for (int i = 1; i <= 2; i++)
-            {
-                await ws.SendTextAsync("C2\r", cancellationToken: total.Token);
-                Write($"[WebSocket/60030] +{elapsed.ElapsedMilliseconds}ms 发送只读 C2#{i}");
-                var message = await ws.ReceiveTextAsync(TimeSpan.FromSeconds(2), total.Token);
-                LogWebSocket($"C2#{i}之后", message, elapsed.ElapsedMilliseconds);
-                if (message is not null)
-                {
-                    string? additional = await ws.ReceiveTextAsync(TimeSpan.FromMilliseconds(600), total.Token);
-                    if (additional is not null)
-                        LogWebSocket($"C2#{i}之后第二帧", additional, elapsed.ElapsedMilliseconds);
-                }
-            }
-            Write($"[WebSocket/60030] 会话关闭前状态：{ws.State}");
+            // One C2 request only. A firmware dump may arrive as 4+ WS messages.
+            var dump = await Rc3040sWebSocketCaptures.CaptureReadOnlyC2Async(
+                ws, TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(700),
+                TimeSpan.FromSeconds(8), total.Token);
+            Write($"[WebSocket/60030] C2 只发送一次; 收到 {dump.Frames.Count} 条文本消息; " +
+                  $"完成原因={(dump.LimitsReached ? "安全限额" : dump.QuietGapObserved ? "后续700ms无消息" : "超时或关闭")}; " +
+                  $"收集耗时={dump.Duration.TotalMilliseconds:F0}ms");
+
+            for (int i = 0; i < dump.Frames.Count; i++)
+                Write($"[WebSocket/60030] FRAME {i+1}/{dump.Frames.Count}: " +
+                    RedactConfiguration(dump.Frames[i], 650));
+
+            var parsed = Rc3040sConfigurationDump.Parse(dump.Frames);
+            Write($"[WebSocket/60030] 识别：固件={parsed.FirmwareVersion ?? "未知"}，" +
+                $"字段={parsed.RecognizedFieldCount}，NET区段={parsed.SawNetworkSection}，" +
+                $"UDP目标区段={parsed.SawUdpDestinationSection}");
+            Write($"[WebSocket/60030] IP={parsed.ConfiguredIp?.ToString() ?? "未知"}，" +
+                $"网关={parsed.ConfiguredGateway?.ToString() ?? "未知"}，" +
+                $"掩码={parsed.ConfiguredMask?.ToString() ?? "未知"}");
+            Write($"[WebSocket/60030] DNS={parsed.ConfiguredDns?.ToString() ?? "未知"}，" +
+                $"DHCP={(parsed.DhcpEnabled.HasValue ? (parsed.DhcpEnabled.Value ? "ON" : "OFF") : "未知")}，" +
+                $"MAC={parsed.MaskedPhysicalAddress ?? "未知"}");
+            Write($"[WebSocket/60030] UDP远端目标={parsed.ConfiguredUdpDestination?.ToString() ?? "未知"} " +
+                "(仅配置读回，未证明当前 UDP 会话已建立)");
+            Write("[WebSocket/60030] 注意：响应收集以空闲间隔判断，不是固件显式事务结束/ACK");
+            Write($"[WebSocket/60030] 会话结束前状态：{ws.State}");
         }
         catch (Exception ex)
         {
@@ -162,21 +177,15 @@ internal static class Program
         }
     }
 
-    private static void LogWebSocket(string label, string? message, long milliseconds)
+    private static string RedactConfiguration(string message, int max)
     {
-        if (message is null)
-        {
-            Write($"[WebSocket/60030] +{milliseconds}ms {label}：无文本/超时/对端关闭");
-            return;
-        }
-        if (Rc3040sFirmwareBanner.TryParse(message, out var identity))
-            Write($"[WebSocket/60030] +{milliseconds}ms {label}：设备版本标识（非角度） {identity.VersionLabel} {identity.MaskedDeviceId}");
-        else if (Gs232Commands.TryParsePosition(Encoding.ASCII.GetBytes(message), out var position))
-            Write(FormattableString.Invariant(
-                $"[WebSocket/60030] +{milliseconds}ms {label}：AZ={position.Azimuth:F1}, EL={position.Elevation:F1}"));
-        else
-            Write($"[WebSocket/60030] +{milliseconds}ms {label}："+
-                EscapeAndLimit(Rc3040sFirmwareBanner.RedactDeviceIds(message), 400));
+        string redacted = Rc3040sFirmwareBanner.RedactDeviceIds(message);
+        redacted = Regex.Replace(redacted, @"(?i)\b(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\b",
+            m => "**:**:**:**:" + m.Value[^5..]);
+        redacted = Regex.Replace(redacted,
+            @"(?im)(AT\+(?:CALL|SSID|PASS|PASSWORD|KEY)\s*=)[^\r\n]*",
+            "$1[REDACTED]");
+        return EscapeAndLimit(redacted, max);
     }
 
     /// <summary>Explicitly opted-in C2 only; never sends W/M/S/jog/AT or EEPROM configuration.</summary>
@@ -368,7 +377,7 @@ internal static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("RC3040S-Diagnostic.exe [--host <IPv4> [--read-only-query]]");
-        Console.WriteLine("只需输入 IP：自动执行 TCP、GS-232 C2、WebSocket 同会话时序、UDP 发现和本地被动监听。");
+        Console.WriteLine("只需输入 IP：自动检查 TCP/GS232、单次 WebSocket C2 完整配置转储、UDP 发现和被动监听。");
         Console.WriteLine("任何模式均不发送电机运动、速度设置或 EEPROM 写入。");
     }
 }
