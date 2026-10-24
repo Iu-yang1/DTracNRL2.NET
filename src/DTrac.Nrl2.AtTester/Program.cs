@@ -1,4 +1,9 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,7 +18,7 @@ internal static class Program
     private static readonly List<string> Report = new();
     private static readonly Regex SafeEcho = new(@"^[A-Za-z0-9_-]{1,32}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private const string PackageVersion = "1.0.0-at-test";
+    private const string PackageVersion = "1.0.1-at-connect-diagnostics";
 
     private static async Task<int> Main(string[] args)
     {
@@ -68,27 +73,56 @@ internal static class Program
         Write($"目标：{host}:60030 (WebSocket) | 本地时间 {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
         Write("[1] 只读配置检查（自动运行，不发送 AT）");
         Rc3040sConfigurationSnapshot? config = null;
-        try
+        bool preflightHadConnectionFailure = false;
+        // Only the READ-ONLY preflight may try again. Never replay an AT write.
+        for (int attempt = 1; attempt <= 2; attempt++)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await using var client = await Rc3040sAtManagementClient.ConnectAsync(
-                host!.ToString(), cancellationToken: cts.Token);
-            config = await client.ReadConfigurationAsync(cts.Token);
-            Write($"固件版本：{config.FirmwareVersion ?? "未识别"}");
-            Write($"管理快照：IP={config.ConfiguredIp?.ToString() ?? "未知"}, " +
-                  $"Gateway={config.ConfiguredGateway?.ToString() ?? "未知"}, " +
-                  $"Mask={config.ConfiguredMask?.ToString() ?? "未知"}");
-            Write($"DNS={config.ConfiguredDns?.ToString() ?? "未知"}, " +
-                  $"DHCP={(config.DhcpEnabled is true ? "ON" : config.DhcpEnabled is false ? "OFF" : "未知")}, " +
-                  $"UDP目的={config.ConfiguredUdpDestination?.ToString() ?? "未知"}");
-            Write($"物理地址（已遮蔽）={config.MaskedPhysicalAddress ?? "未知"}，解析字段={config.RecognizedFieldCount}");
+            try
+            {
+                Write($"[WS/60030] 尝试 {attempt}/2：建立 WebSocket 握手...");
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(18));
+                var clock = Stopwatch.StartNew();
+                await using var client = await Rc3040sAtManagementClient.ConnectAsync(
+                    host!.ToString(), cancellationToken: cts.Token);
+                Write($"[WS/60030] 握手成功 (+{clock.ElapsedMilliseconds}ms)");
+                Write("[WS/60030] 开始发送一次只读 C2，收集多帧配置...");
+                config = await client.ReadConfigurationAsync(cts.Token);
+                Write($"[WS/60030] 完成配置读取 (+{clock.ElapsedMilliseconds}ms)");
+                Write($"固件版本：{config.FirmwareVersion ?? "未识别"}");
+                Write($"管理快照：IP={config.ConfiguredIp?.ToString() ?? "未知"}, " +
+                      $"Gateway={config.ConfiguredGateway?.ToString() ?? "未知"}, " +
+                      $"Mask={config.ConfiguredMask?.ToString() ?? "未知"}");
+                Write($"DNS={config.ConfiguredDns?.ToString() ?? "未知"}, " +
+                      $"DHCP={(config.DhcpEnabled is true ? "ON" : config.DhcpEnabled is false ? "OFF" : "未知")}, " +
+                      $"UDP目的={config.ConfiguredUdpDestination?.ToString() ?? "未知"}");
+                Write($"物理地址（已遮蔽）={config.MaskedPhysicalAddress ?? "未知"}，解析字段={config.RecognizedFieldCount}");
+                break;
+            }
+            catch (Exception error)
+            {
+                preflightHadConnectionFailure = true;
+                Write($"[WS/60030] 第 {attempt} 次只读检查失败，完整异常链：");
+                WriteExceptionChain(error);
+                if (attempt == 1)
+                {
+                    await InspectLanConnectivityAsync(host!);
+                    Write("[WS/60030] 仅只读路径延迟 2.5 秒后再次尝试一次；AT 写操作本轮始终禁用。");
+                    await Task.Delay(TimeSpan.FromMilliseconds(2500));
+                }
+            }
         }
-        catch (Exception e)
+        if (config is null)
         {
-            Write("只读配置预检查未成功：" + SafeException(e));
-            Write("不开放任何 AT 实机操作。请保存这份报告。");
+            Write("两次只读预检查都未成功；无任何 AT 命令发送。");
             SaveAndExit();
             return 3;
+        }
+        if (preflightHadConnectionFailure)
+        {
+            Write("只读检查虽已恢复，但此前发生过连接故障。本轮所有 AT 写操作锁定。");
+            Write("请把日志发回，用于定位设备连接资源、代理或网络握手问题。");
+            SaveAndExit();
+            return 0;
         }
 
         if (config?.FirmwareVersion is null ||
@@ -213,6 +247,70 @@ internal static class Program
 
         SaveAndExit();
         return 0;
+    }
+
+    private static async Task InspectLanConnectivityAsync(IPAddress device)
+    {
+        Write("[诊断] 仅在 WebSocket 出错后检查 TCP 会话状态与端口。");
+        try
+        {
+            var existing = IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpConnections()
+                .Where(x => x.RemoteEndPoint.Address.Equals(device) &&
+                    x.RemoteEndPoint.Port is 60020 or 60030)
+                .Take(16).ToArray();
+            if (existing.Length == 0)
+                Write("[诊断] 本机未枚举到指向该设备 60020/60030 的活动 TCP 会话。");
+            foreach (var item in existing)
+                Write($"[诊断] TCP {item.LocalEndPoint.Port} -> {item.RemoteEndPoint.Port} " +
+                      $"状态={item.State}");
+        }
+        catch (Exception ex) when (ex is NetworkInformationException
+            or SocketException or UnauthorizedAccessException)
+        {
+            Write("[诊断] 枚举本机 TCP 会话失败：" + SafeException(ex));
+        }
+
+        foreach (int port in new[] { 60030, 60020 })
+        {
+            using var tcp = new TcpClient(AddressFamily.InterNetwork);
+            using var limit = new CancellationTokenSource(TimeSpan.FromMilliseconds(2500));
+            var watch = Stopwatch.StartNew();
+            try
+            {
+                await tcp.ConnectAsync(device, port, limit.Token);
+                Write($"[TCP/{port}] CONNECTED; +{watch.ElapsedMilliseconds}ms (仅建立并关闭连接，不发命令)");
+            }
+            catch (OperationCanceledException)
+            {
+                Write($"[TCP/{port}] TIMEOUT; +{watch.ElapsedMilliseconds}ms");
+            }
+            catch (SocketException e)
+            {
+                Write($"[TCP/{port}] SOCKET_FAIL={e.SocketErrorCode}, native={e.NativeErrorCode}; +{watch.ElapsedMilliseconds}ms");
+            }
+            catch (Exception e)
+            {
+                Write($"[TCP/{port}] ERROR: {SafeException(e)}");
+            }
+        }
+        Write("[诊断] 注：TCP 可连不代表 WebSocket HTTP Upgrade 成功。");
+    }
+
+    private static void WriteExceptionChain(Exception error)
+    {
+        Exception? current = error;
+        for (int depth = 0; depth < 6 && current is not null; depth++)
+        {
+            Write($"  cause[{depth}] {SafeException(current)}");
+            if (current is SocketException sock)
+                Write($"  SocketError={sock.SocketErrorCode}; NativeError={sock.NativeErrorCode}");
+            if (current is WebSocketException websocket)
+                Write($"  WebSocketError={websocket.WebSocketErrorCode}; NativeError={websocket.NativeErrorCode}");
+            if (current is HttpRequestException http)
+                Write($"  HttpRequestError={http.HttpRequestError}; HttpStatus={http.StatusCode}");
+            current = current.InnerException;
+        }
     }
 
     private static bool Authorize(string phrase, string firmware, bool highRisk)

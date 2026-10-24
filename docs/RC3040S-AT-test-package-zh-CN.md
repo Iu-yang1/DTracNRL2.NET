@@ -41,3 +41,13 @@ CI 在 Windows runner 执行：
 `dotnet publish src/DTrac.Nrl2.AtTester/DTrac.Nrl2.AtTester.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist-at`
 
 输出 `RC3040S-AT-Tester.exe`、`README-AT-TEST-ZH-CN.md`，自动验证 `--self-test` 在**无网络**条件下完成。
+
+## v1.0.1：WebSocket 连接失败的完整诊断与只读恢复
+
+用户在 2026-10-24 12:10 +08 使用 v1.0.0 针对已验证的 `192.168.1.9:60030` 得到 `WebSocketException: Unable to connect to the remote server`，失败发生在握手/连接阶段而非 AT 命令解析。
+
+新版在首次连接失败时自动保存嵌套异常及 Socket 错误码，检查本机对该 IP 的 TCP 60020/60030 会话状态、各进行一次无内容 TCP 端口连接探测，然后只读路径延迟 2.5 秒尝试第二次连接。**若首次失败、第二次只读成功，本次程序仍会禁止所有 AT 写入**，以免不稳定连接影响控制板。两次失败则生成一份报告后退出。
+
+SDK 对 RFC1918 等局域网字面 IP 使用不走系统 HTTP 代理的 WebSocket 连接，不修改 Windows 全局代理。正常断开先尝试有界 WebSocket Close 握手，失败再 Abort，减小微控制器保留旧连接的可能性。以上是防御性修复，**尚未实机确认是具体根因**。
+
+用户只需下载新的 `RC3040S-AT-Tester-Windows-x64` ZIP，解压双击，输入 IP，将新生成的 `RC3040S_AT_Test_*.txt` 回传。无需任何 PowerShell 命令，也无需安装开发环境。若连续失败，请停止反复连接，依据日志分析后再决定是否重启硬件。
