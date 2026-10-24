@@ -1,4 +1,6 @@
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using DTrac.Nrl2.Rotator;
@@ -36,11 +38,29 @@ public sealed class Rc3040sWebSocketClient : IAsyncDisposable
         try
         {
             ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
+            // Use a direct connection for RFC1918 LAN literal addresses. Windows
+            // system/HTTP proxy discovery can intercept ws:// even when a TCP
+            // socket to the board is reachable. No global proxy settings change.
+            if (IPAddress.TryParse(host, out var target) &&
+                target.AddressFamily == AddressFamily.InterNetwork &&
+                IsLocalControlAddress(target))
+                ws.Options.Proxy = new WebProxy();
             await ws.ConnectAsync(new UriBuilder(Uri.UriSchemeWs, host, port, "/").Uri,
                 cancellationToken).ConfigureAwait(false);
             return new Rc3040sWebSocketClient(ws);
         }
         catch { ws.Dispose(); throw; }
+    }
+
+    internal static bool IsLocalControlAddress(IPAddress address)
+    {
+        byte[] octets = address.GetAddressBytes();
+        return octets.Length == 4 &&
+            (octets[0] == 10 ||
+             octets[0] == 127 ||
+             octets[0] == 192 && octets[1] == 168 ||
+             octets[0] == 172 && octets[1] is >= 16 and <= 31 ||
+             octets[0] == 169 && octets[1] == 254);
     }
 
     public WebSocketState State => socket.State;
@@ -150,10 +170,40 @@ public sealed class Rc3040sWebSocketClient : IAsyncDisposable
     {
         if (disposed) return;
         disposed = true;
-        socket.Abort();
-        socket.Dispose();
-        sendGate.Dispose();
-        receiveGate.Dispose();
-        await ValueTask.CompletedTask;
+        // Old behavior unconditionally Abort()ed working management WebSockets.
+        // That drops TCP without a normal WebSocket Close frame, which can make
+        // constrained embedded TCP servers retain session slots. Attempt a
+        // bounded graceful close; only abort on failure or timeout.
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(1200));
+            if (socket.State == WebSocketState.Open)
+            {
+                if (pendingRead is { IsCompleted: false })
+                {
+                    // Another ReceiveAsync is pending. CloseAsync would compete
+                    // for the single receive slot; send Close and let it drain.
+                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure,
+                        "done", deadline.Token).ConfigureAwait(false);
+                    await pendingRead.WaitAsync(deadline.Token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure,
+                        "done", deadline.Token).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or WebSocketException
+            or IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            socket.Abort();
+        }
+        finally
+        {
+            socket.Dispose();
+            sendGate.Dispose();
+            receiveGate.Dispose();
+        }
     }
 }
