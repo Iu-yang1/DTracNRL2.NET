@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using DTrac.Nrl2.Discovery;
 using DTrac.Nrl2.Protocol;
 using DTrac.Nrl2.Transport;
 
