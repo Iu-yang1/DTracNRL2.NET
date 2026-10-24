@@ -28,8 +28,10 @@ public sealed class LanRelayTests
     [Fact]
     public void SpeedEncodingIsFiveDigitFixedWidthAndNeverAutoTransmitted()
     {
-        Assert.Equal("AT+AZ_SPD=00001\r",
-            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetAzimuthSpeed(1)));
+        Assert.Equal("AT+AZ_SPD=00015\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetAzimuthSpeed(15)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Rc3040sFirmwareCommands.SetAzimuthSpeed(1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Rc3040sFirmwareCommands.SetElevationSpeed(14));
         Assert.Equal("AT+EL_SPD=65535\r",
             System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetElevationSpeed(ushort.MaxValue)));
         Assert.Throws<ArgumentOutOfRangeException>(() => Rc3040sFirmwareCommands.SetAzimuthSpeed(0));
