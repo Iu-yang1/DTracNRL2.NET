@@ -21,8 +21,21 @@ public sealed class LanRelayTests
         Assert.True(Nrl2LanRelay.IsAllowedCommand(Gs232Commands.MoveTo(new(180, 30)), true));
         Assert.False(Nrl2LanRelay.IsAllowedCommand("AT+AZ_SPD=300\r\n"u8, true));
         Assert.False(Nrl2LanRelay.IsAllowedCommand("W999 190\r\n"u8, true));
-        Assert.Equal("AT+AZ_SPD=300\r", System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetAzimuthSpeed(300)));
-        Assert.Equal("AT+EL_SPD=300\r", System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetElevationSpeed(300)));
+        Assert.Equal("AT+AZ_SPD=00300\r", System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetAzimuthSpeed(300)));
+        Assert.Equal("AT+EL_SPD=00300\r", System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetElevationSpeed(300)));
+    }
+
+    [Fact]
+    public void SpeedEncodingIsFiveDigitFixedWidthAndNeverAutoTransmitted()
+    {
+        Assert.Equal("AT+AZ_SPD=00001\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetAzimuthSpeed(1)));
+        Assert.Equal("AT+EL_SPD=65535\r",
+            System.Text.Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetElevationSpeed(ushort.MaxValue)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Rc3040sFirmwareCommands.SetAzimuthSpeed(0));
+        Assert.Equal(60030, Rc3040sNetworkPorts.ManagementTcpPort);
+        Assert.Equal(60020, Rc3040sNetworkPorts.Gs232TcpPort);
+        Assert.Equal(60059, Rc3040sNetworkPorts.DiscoveryUdpPort);
     }
 
     [Fact]

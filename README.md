@@ -49,7 +49,7 @@ using var relay = new Nrl2LanRelay(
 await relay.RunAsync(cancellationToken);
 ```
 
-The firmware also contains `AT+AZ_SPD=` / `AT+EL_SPD=`
+Firmware AT configuration has a distinct **TCP/60030 Socket 0 management ingress** according to static analysis (framing remains unknown; no management network writer is exposed). The firmware also contains `AT+AZ_SPD=` / `AT+EL_SPD=`
 and hardware auto-ramping, **but these AT commands are a separate parser from
 GS-232 and have not been proven available on TCP/60020 or NRL2 Type5**.
 `Rc3040sFirmwareCommands` builds these commands for isolated testing
@@ -123,3 +123,7 @@ The IDs above are **fictional**. `127.0.0.1:19120` is only the local simulator, 
 ### License
 
 MIT for this independent implementation. The reverse-engineering notes describe interoperability findings, without shipping proprietary APK or firmware binaries.
+
+## Firmware AT / motion evidence
+
+[Stage 5: 60030 management ingress, speed encoding, configuration and motion analysis](docs/reverse-engineering/RC3040S_firmware_stage5_AT_and_motion.md). Raw AZ/EL speed commands are exactly five decimal digits; they may persist settings and cannot be assumed to work on TCP/60020 or NRL2 Type5. An external acceleration/jerk setpoint or a fully decoded native DEMO command has **not** been verified.
