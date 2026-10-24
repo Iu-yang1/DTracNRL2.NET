@@ -18,7 +18,7 @@ internal static class Program
     private static readonly List<string> Report = new();
     private static readonly Regex SafeEcho = new(@"^[A-Za-z0-9_-]{1,32}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private const string PackageVersion = "1.0.2-device-identity";
+    private const string PackageVersion = "1.0.3-echo-speed-readback";
 
     private static async Task<int> Main(string[] args)
     {
@@ -100,6 +100,12 @@ internal static class Program
                       $"DHCP={(config.DhcpEnabled is true ? "ON" : config.DhcpEnabled is false ? "OFF" : "未知")}, " +
                       $"UDP目的={config.ConfiguredUdpDestination?.ToString() ?? "未知"}");
                 Write($"物理地址（已遮蔽）={config.MaskedPhysicalAddress ?? "未知"}，解析字段={config.RecognizedFieldCount}");
+                Write($"[YUNTAI] 原始AZ速度={config.AzimuthSpeedRaw?.ToString("D5") ?? "未知"}, " +
+                      $"原始EL速度={config.ElevationSpeedRaw?.ToString("D5") ?? "未知"}");
+                Write($"[YUNTAI] 设备标识={config.ModelToken ?? "未知"}, " +
+                      $"模式XW={config.XwModeToken ?? "未知"}, " +
+                      $"行程标识={config.TravelModeToken ?? "未知"} " +
+                      "(仅配置文本，不是速度单位/最大转角实测值)");
                 break;
             }
             catch (Exception error)
@@ -237,6 +243,8 @@ internal static class Program
             Write($"DeviceAcknowledgementVerified={result.DeviceAcknowledgementVerified}");
             Write($"PersistentSettingVerified={result.PersistentSettingVerified}");
             Write($"ReadbackAvailable={result.ReadbackAvailable}");
+            if (result.Operation == Rc3040sAtOperation.DiagnosticEcho)
+                Write($"DiagnosticEchoMatched={result.DiagnosticEchoMatched}（精确回显，不代表 EEPROM/速度写入 ACK）");
             if (result.ObservedMessages.Count == 0)
                 Write("命令后未观察到文本帧；此结果并不意味着执行成功或失败。");
             for (int i = 0; i < result.ObservedMessages.Count; i++)

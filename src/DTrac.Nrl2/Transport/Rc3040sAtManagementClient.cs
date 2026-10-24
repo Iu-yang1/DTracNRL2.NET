@@ -50,6 +50,10 @@ public sealed class Rc3040sAtWritePermit
     public Rc3040sAtOperation Operation { get; }
     public string ExpectedFirmware { get; }
 
+    // Only for the diagnostic AT+TEST operation. It is an exact per-request
+    // echoed text marker, not a generic acknowledgement for EEPROM writes.
+    internal string? ExpectedEchoPayload { get; private init; }
+
     /// <summary>
     /// Raw speed is an uncalibrated frequency/firmware value; 1..65535 is only
     /// encoding safety, NOT a proven safe axis speed. May persist to EEPROM.
@@ -81,7 +85,8 @@ public sealed class Rc3040sAtWritePermit
         bool confirmPotentialDeviceEffects, bool confirmUnverifiedProtocol) =>
         new(Rc3040sAtOperation.DiagnosticEcho,
             Rc3040sFirmwareCommands.DiagnosticEcho(payload),
-            expectedFirmware, confirmPotentialDeviceEffects, confirmUnverifiedProtocol);
+            expectedFirmware, confirmPotentialDeviceEffects, confirmUnverifiedProtocol)
+        { ExpectedEchoPayload = payload };
 
     internal byte[] ConsumeExactlyOnce(string actualFirmware)
     {
@@ -104,7 +109,8 @@ public sealed record Rc3040sAtDispatchObservation(
     IReadOnlyList<string> ObservedMessages,
     bool DeviceAcknowledgementVerified,
     bool PersistentSettingVerified,
-    bool ReadbackAvailable);
+    bool ReadbackAvailable,
+    bool DiagnosticEchoMatched = false);
 
 /// <summary>
 /// Two-phase management transport: C2 configuration identification first,
@@ -182,11 +188,16 @@ public sealed class Rc3040sAtManagementClient : IAsyncDisposable
             if (frame is null) break;
             observed.Add(RedactAtResponse(frame));
         }
+        bool exactEcho = permit.Operation == Rc3040sAtOperation.DiagnosticEcho &&
+            permit.ExpectedEchoPayload is not null &&
+            observed.Any(frame => frame.TrimEnd('\r', '\n')
+                .Equals(permit.ExpectedEchoPayload, StringComparison.Ordinal));
         return new Rc3040sAtDispatchObservation(
             permit.Operation, config.FirmwareVersion, true, observed.AsReadOnly(),
             DeviceAcknowledgementVerified: false,
             PersistentSettingVerified: false,
-            ReadbackAvailable: false);
+            ReadbackAvailable: false,
+            DiagnosticEchoMatched: exactEcho);
     }
 
     private static string RedactAtResponse(string value)

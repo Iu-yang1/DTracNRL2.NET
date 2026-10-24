@@ -71,6 +71,73 @@ public sealed class Rc3040sAtManagementClientTests
     }
 
     [Fact]
+    public async Task Real260223StyleTestEchoIsClassifiedSeparatelyFromConfigurationDump()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var server = Task.Run(async () =>
+        {
+            using var tcp = await listener.AcceptTcpClientAsync(deadline.Token);
+            using var websocket = await AcceptAsync(tcp, deadline.Token);
+            Assert.Equal("C2\r", await ReceiveTextAsync(websocket, deadline.Token));
+            foreach (var frame in ConfigFrames(Firmware))
+                await websocket.SendAsync(Encoding.ASCII.GetBytes(frame),
+                    WebSocketMessageType.Text, true, deadline.Token);
+            Assert.Equal("AT+TEST=TEST_01\r", await ReceiveTextAsync(websocket, deadline.Token));
+            await websocket.SendAsync("TEST_01\r"u8.ToArray(),
+                WebSocketMessageType.Text, true, deadline.Token);
+            // The banner and YUNTAI messages are not additional echo ACKs.
+            await websocket.SendAsync(Encoding.ASCII.GetBytes(
+                Firmware + " " + FictionalHardwareId + "\r\n"),
+                WebSocketMessageType.Text, true, deadline.Token);
+            await websocket.SendAsync(
+                "==========YUNTAI SETUP===========\r\nAT+AZ_SPD=05000\r\nAT+EL_SPD=05000\r\n"u8.ToArray(),
+                WebSocketMessageType.Text, true, deadline.Token);
+        });
+        await using var client = await Rc3040sAtManagementClient.ConnectAsync(
+            "127.0.0.1", port, deadline.Token);
+        var permit = Rc3040sAtWritePermit.ForDiagnosticEcho(
+            "TEST_01", Firmware, true, true);
+        var result = await client.SendApprovedAsync(permit, deadline.Token);
+        Assert.True(result.DiagnosticEchoMatched);
+        Assert.False(result.DeviceAcknowledgementVerified);
+        Assert.False(result.PersistentSettingVerified);
+        Assert.Contains(result.ObservedMessages, x => x == "TEST_01\r");
+        Assert.Contains(result.ObservedMessages, x => x.Contains("YUNTAI SETUP", StringComparison.Ordinal));
+        await server;
+    }
+
+    [Fact]
+    public async Task NonMatchingEchoMustNotBeClassifiedAsAcknowledged()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var server = Task.Run(async () =>
+        {
+            using var tcp = await listener.AcceptTcpClientAsync(deadline.Token);
+            using var websocket = await AcceptAsync(tcp, deadline.Token);
+            Assert.Equal("C2\r", await ReceiveTextAsync(websocket, deadline.Token));
+            foreach (string frame in ConfigFrames(Firmware))
+                await websocket.SendAsync(Encoding.ASCII.GetBytes(frame),
+                    WebSocketMessageType.Text, true, deadline.Token);
+            Assert.Equal("AT+TEST=TEST_01\r", await ReceiveTextAsync(websocket, deadline.Token));
+            await websocket.SendAsync("TEST_02\r"u8.ToArray(),
+                WebSocketMessageType.Text, true, deadline.Token);
+        });
+        await using var client = await Rc3040sAtManagementClient.ConnectAsync(
+            "127.0.0.1", port, deadline.Token);
+        var permit = Rc3040sAtWritePermit.ForDiagnosticEcho("TEST_01", Firmware, true, true);
+        var result = await client.SendApprovedAsync(permit, deadline.Token);
+        Assert.False(result.DiagnosticEchoMatched);
+        Assert.False(result.DeviceAcknowledgementVerified);
+        await server;
+    }
+
+    [Fact]
     public async Task MismatchedFirmwareNeverTransmitsAt()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
