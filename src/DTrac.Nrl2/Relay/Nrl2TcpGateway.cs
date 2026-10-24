@@ -128,7 +128,7 @@ public sealed class Nrl2TcpGateway : IDisposable
             int el = int.Parse(command.AsSpan(5, 3), CultureInfo.InvariantCulture);
             if (az > maxAzimuth || el > maxElevation) return;
             await controller.MoveToAsync(new RotatorPosition(az, el), deadline.Token).ConfigureAwait(false);
-            lastFreshPosition.Remove(request.SourceId);
+            lastFreshPosition.Remove((request.SourceId, packet.RemoteEndPoint.ToString()));
             return;
         }
         if (command.Length == 6 && command[0] == 'M')
@@ -136,7 +136,7 @@ public sealed class Nrl2TcpGateway : IDisposable
             int az = int.Parse(command.AsSpan(1, 3), CultureInfo.InvariantCulture);
             if (az > maxAzimuth) return;
             await controller.MoveAzimuthAsync(az, deadline.Token).ConfigureAwait(false);
-            lastFreshPosition.Remove(request.SourceId);
+            lastFreshPosition.Remove((request.SourceId, packet.RemoteEndPoint.ToString()));
             return;
         }
         // The gateway does not forward open-ended manual jogs without a validated
