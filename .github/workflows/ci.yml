@@ -65,3 +65,34 @@ jobs:
           path: dist/RC3040S-Diagnostic.exe
           if-no-files-found: error
           retention-days: 30
+
+  at-tester-win-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish portable WebSocket AT test package
+        shell: pwsh
+        run: |
+          dotnet publish src/DTrac.Nrl2.AtTester/DTrac.Nrl2.AtTester.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o dist-at
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path dist-at/RC3040S-AT-Tester.exe)) { throw "Missing AT test EXE" }
+          Copy-Item docs/RC3040S-AT-test-package-zh-CN.md dist-at/README-AT-TEST-ZH-CN.md
+      - name: No-network AT tester smoke test
+        shell: pwsh
+        run: |
+          & dist-at/RC3040S-AT-Tester.exe --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: SHA256 for tester EXE
+        shell: pwsh
+        run: Get-FileHash dist-at/RC3040S-AT-Tester.exe -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RC3040S-AT-Tester-Windows-x64
+          path: |
+            dist-at/RC3040S-AT-Tester.exe
+            dist-at/README-AT-TEST-ZH-CN.md
+          if-no-files-found: error
+          retention-days: 30
