@@ -103,3 +103,15 @@ TCP/60020 仍为 GS-232 通道，UDP/60059 仅发现，NRL2 Type5 仍转 GS-232�
 因此 SDK 构造格式更正为如 `AT+AZ_SPD=00300\r`。这些数值不能解释为度每秒，
 也不是经实机认证的安全速度范围；设置可能写入 EEPROM。详细证据、配置表和待验证项：
 [第五阶段 AT 与电机控制逆向报告](../reverse-engineering/RC3040S_firmware_stage5_AT_and_motion.md)。
+
+## 第六阶段修正：管理通道为标准 WebSocket
+
+控制板的 TCP/60030 不是裸 AT 端口，而是包含 `Sec-WebSocket-Key`、
+`HTTP/1.1 101 Switching Protocols` 握手与 opcode/MASK/126/127 帧解析的
+**WebSocket 服务端**，详见 [第六阶段源码证据](../reverse-engineering/RC3040S_firmware_stage6_websocket.md)。
+
+SDK 已新增 `Rc3040sWebSocketClient`，采用 `ws://IP:60030/` 建连，
+支持异步读取设备文本反馈，**不会在建连时自动发送命令**。AT 写操作需要
+显式传入 `confirmPossiblePersistentWrite: true`，且可能修改 EEPROM；
+WebSocket 发送成功不构成设备接受或机械响应的确认。准确的命令返回格式、
+网络鉴权方式和原生加减速曲线仍需实机验证。

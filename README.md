@@ -127,3 +127,19 @@ MIT for this independent implementation. The reverse-engineering notes describe 
 ## Firmware AT / motion evidence
 
 [Stage 5: 60030 management ingress, speed encoding, configuration and motion analysis](docs/reverse-engineering/RC3040S_firmware_stage5_AT_and_motion.md). Raw AZ/EL speed commands are exactly five decimal digits; they may persist settings and cannot be assumed to work on TCP/60020 or NRL2 Type5. An external acceleration/jerk setpoint or a fully decoded native DEMO command has **not** been verified.
+
+## Native management channel: WebSocket/TCP 60030
+
+Firmware disassembly identifies RFC 6455 handshake strings (`Sec-WebSocket-Key`,
+`101 Switching Protocols`) and FIN/opcode/mask/`126`/`127` frame parsing on TCP
+port **60030**. WebSocket text/binary payload dispatch can call the AT handler
+and some GS-232 logic. This corrects the previous "unknown proprietary
+management frame" description.
+
+`Rc3040sWebSocketClient.ConnectAsync(host)` performs **only** the WebSocket
+handshake; `ReceiveTextAsync` exposes unsolicited messages. Explicit
+`SendFirmwareCommandAsync(command, confirmPossiblePersistentWrite: true)`
+is available for an *isolated, authorized hardware test* and may write EEPROM.
+The first fully confirmed application-level request/response pairs have **not**
+yet been captured, so **do not** infer successful configuration from a WebSocket
+send. See [stage 6 evidence](docs/reverse-engineering/RC3040S_firmware_stage6_websocket.md).
