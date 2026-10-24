@@ -220,11 +220,14 @@ public sealed class Rc3040sAtManagementClientTests
                     $"AT+AZ_SPD={value:D5}\r\nAT+EL_SPD={value:D5}\r\n";
                 await ws.SendAsync(Encoding.ASCII.GetBytes(speedFrame),
                     WebSocketMessageType.Text, true, deadline.Token);
-                if (unchanged) break;
+                if (unchanged || step == 1) break; // readback must NOT trigger a second AT
                 string at = await ReceiveTextAsync(ws, deadline.Token);
                 Assert.Equal(azimuth ? "AT+AZ_SPD=05735\r" : "AT+EL_SPD=05735\r", at);
                 Interlocked.Increment(ref atWrites);
             }
+            // Permit a 700-ms idle capture window before normal shutdown.
+            await Task.Delay(1000, deadline.Token);
+            await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "done", deadline.Token);
         });
         await using var client = await Rc3040sAtManagementClient.ConnectAsync(
             "127.0.0.1", port, deadline.Token);
