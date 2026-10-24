@@ -27,6 +27,6 @@ while (true)
     // Simulator replies to C2 only. STOP deliberately does not confirm motor state.
     if (command != "C2\r\n") continue;
     string reply = FormattableString.Invariant($"AZ={position.Azimuth:000}  EL={position.Elevation:000}\r\n");
-    var answer = Nrl2Frame.Encode(frame.TargetId, frame.SourceId, Encoding.ASCII.GetBytes(reply));
+    var answer = Nrl2Frame.EncodeDevice(frame.TargetId, frame.SourceId, Encoding.ASCII.GetBytes(reply));
     await socket.SendAsync(answer, received.RemoteEndPoint);
 }

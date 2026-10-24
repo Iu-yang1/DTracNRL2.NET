@@ -36,12 +36,42 @@ public sealed class ProtocolTests
     [Fact]
     public void ReverseIdentifiersAreRequiredOnReplies()
     {
-        byte[] response = Nrl2Frame.Encode(Rotor, Sid, "AZ=180  EL=030\r\n"u8);
+        byte[] response = Nrl2Frame.EncodeDevice(Rotor, Sid, "AZ=180  EL=030\r\n"u8);
         Assert.True(Nrl2Frame.TryDecodeReply(response, Sid, Rotor, out var body));
         Assert.True(Gs232Commands.TryParsePosition(body, out var pos));
         Assert.Equal(new RotatorPosition(180, 30), pos);
         response[20] = 6;
         Assert.False(Nrl2Frame.TryDecodeReply(response, Sid, Rotor, out _));
+    }
+
+    [Fact]
+    public void FirmwareHeartbeatUsesBinaryLengthAndType2()
+    {
+        byte[] heartbeat = Nrl2Frame.EncodeDevice(Rotor, Rotor, ReadOnlySpan<byte>.Empty,
+            Nrl2Frame.HeartbeatType);
+        Assert.Equal(48, heartbeat.Length);
+        Assert.Equal(0, heartbeat[4]);
+        Assert.Equal(48, heartbeat[5]);
+        Assert.Equal(1, heartbeat[21]);
+        Assert.True(Nrl2Frame.TryParse(heartbeat, out var message, Nrl2LengthEncoding.FirmwareBigEndian));
+        Assert.Equal(Nrl2Frame.HeartbeatType, message.Type);
+        Assert.False(Nrl2Frame.TryParse(heartbeat, out _, Nrl2LengthEncoding.AppAsciiDecimal));
+        heartbeat[5] = 49;
+        Assert.False(Nrl2Frame.TryParse(heartbeat, out _, Nrl2LengthEncoding.FirmwareBigEndian));
+    }
+
+    [Fact]
+    public void FirmwareReplyRequiresCorrectDirectionalLength()
+    {
+        var packet = Nrl2Frame.EncodeDevice(Rotor, Sid, "AZ=180  EL=030\r\n"u8);
+        Assert.Equal(64, packet.Length);
+        Assert.Equal(0, packet[4]);
+        Assert.Equal(64, packet[5]);
+        Assert.True(Nrl2Frame.TryDecodeReply(packet, Sid, Rotor, out var bytes));
+        Assert.Equal("AZ=180  EL=030\r\n", Encoding.ASCII.GetString(bytes));
+        Assert.False(Nrl2Frame.TryDecodeReply(packet, Sid, Rotor, out _,
+            Nrl2LengthEncoding.AppAsciiDecimal));
+        Assert.Throws<ArgumentException>(() => Nrl2Frame.EncodeDevice(Rotor, Sid, "x"u8, deviceTag: "invalid"));
     }
 
     [Fact]

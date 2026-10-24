@@ -14,14 +14,17 @@ public sealed class Nrl2UdpClient : IDisposable
     private readonly SemaphoreSlim queryGate = new(1, 1);
     private readonly string appSid;
     private readonly string rotorId;
+    private readonly Nrl2LengthEncoding replyLengthEncoding;
     private bool disposed;
 
-    public Nrl2UdpClient(string relayHost, int relayPort, string appSid, string rotorId)
+    public Nrl2UdpClient(string relayHost, int relayPort, string appSid, string rotorId,
+        Nrl2LengthEncoding replyLengthEncoding = Nrl2LengthEncoding.FirmwareBigEndian)
     {
         if (string.IsNullOrWhiteSpace(relayHost)) throw new ArgumentException("Relay host is required.", nameof(relayHost));
         if (relayPort is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(relayPort));
         this.appSid = Nrl2Frame.NormalizeId(appSid);
         this.rotorId = Nrl2Frame.NormalizeId(rotorId);
+        this.replyLengthEncoding = replyLengthEncoding;
         socket = new UdpClient(AddressFamily.InterNetwork);
         try { socket.Connect(relayHost, relayPort); }
         catch { socket.Dispose(); throw; }
@@ -68,7 +71,7 @@ public sealed class Nrl2UdpClient : IDisposable
                 UdpReceiveResult answer;
                 try { answer = await socket.ReceiveAsync(cts.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
-                if (Nrl2Frame.TryDecodeReply(answer.Buffer, appSid, rotorId, out var body) &&
+                if (Nrl2Frame.TryDecodeReply(answer.Buffer, appSid, rotorId, out var body, replyLengthEncoding) &&
                     Gs232Commands.TryParsePosition(body, out var position))
                     return position;
             }
