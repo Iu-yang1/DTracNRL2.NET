@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using DTrac.Nrl2.Discovery;
 
@@ -38,6 +39,9 @@ public static partial class Rc3040sConfigurationDump
         bool? dhcp = null;
         string? firmware = null, maskedMac = null;
         bool networkHeader = false, udpHeader = false;
+        bool yuntaiHeader = false, identityHeader = false;
+        ushort? azSpeed = null, elSpeed = null;
+        string? modelToken = null, xwToken = null, travelModeToken = null;
         var fields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         string all = text.ToString();
@@ -60,7 +64,25 @@ public static partial class Rc3040sConfigurationDump
                 udpHeader = true;
                 continue;
             }
+            if (line.Contains("YUNTAI SETUP", StringComparison.OrdinalIgnoreCase))
+            {
+                yuntaiHeader = true;
+                continue;
+            }
+            if (line.Contains("CALL/SSID", StringComparison.OrdinalIgnoreCase))
+            {
+                identityHeader = true;
+                continue;
+            }
             if (!line.StartsWith("AT+", StringComparison.OrdinalIgnoreCase)) continue;
+            // Mode commands in the observed configuration dump have NO equals:
+            // AT+P450. They are tokens, not evidence of a measured axis limit.
+            if (line is "AT+P450" or "AT+P360")
+            {
+                travelModeToken = line[3..];
+                fields.Add("TRAVEL_MODE");
+                continue;
+            }
             int equals = line.IndexOf('=');
             if (equals < 3) continue;
             string key = line[3..equals].ToUpperInvariant();
@@ -86,6 +108,32 @@ public static partial class Rc3040sConfigurationDump
                     if (value.Equals("ON", StringComparison.OrdinalIgnoreCase)) { dhcp = true; fields.Add(key); }
                     else if (value.Equals("OFF", StringComparison.OrdinalIgnoreCase)) { dhcp = false; fields.Add(key); }
                     break;
+                case "AZ_SPD":
+                    if (TrySpeed(value, out ushort az))
+                    {
+                        azSpeed = az; fields.Add(key);
+                    }
+                    break;
+                case "EL_SPD":
+                    if (TrySpeed(value, out ushort el))
+                    {
+                        elSpeed = el; fields.Add(key);
+                    }
+                    break;
+                case "YT":
+                    if (value.Length is >= 1 and <= 12 &&
+                        value.All(c => c is >= 'A' and <= 'Z' or >= '0' and <= '9'))
+                    {
+                        modelToken = value; fields.Add(key);
+                    }
+                    break;
+                case "XW":
+                    if (value.Length is >= 1 and <= 8 &&
+                        value.All(c => c is >= 'A' and <= 'Z' or >= '0' and <= '9'))
+                    {
+                        xwToken = value; fields.Add(key);
+                    }
+                    break;
                 case "PHY":
                     if (MacPattern().IsMatch(value))
                     {
@@ -99,8 +147,16 @@ public static partial class Rc3040sConfigurationDump
         }
         return new Rc3040sConfigurationSnapshot(
             firmware, ip, gateway, mask, dns, dhcp, destination, maskedMac,
-            networkHeader, udpHeader, fields.Count, count);
+            networkHeader, udpHeader, fields.Count, count,
+            azSpeed, elSpeed, modelToken, xwToken, travelModeToken,
+            yuntaiHeader, identityHeader);
     }
+
+    private static bool TrySpeed(string value, out ushort raw) =>
+        value.Length == 5 &&
+        value.All(c => c is >= '0' and <= '9') &&
+        ushort.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out raw) &&
+        raw > 0;
 
     private static bool TryIp(string text, out IPAddress address) =>
         Rc3040sDiscovery.TryParseDecimalIpv4(text, out address);
@@ -122,4 +178,11 @@ public sealed record Rc3040sConfigurationSnapshot(
     bool SawNetworkSection,
     bool SawUdpDestinationSection,
     int RecognizedFieldCount,
-    int WebSocketMessageCount);
+    int WebSocketMessageCount,
+    ushort? AzimuthSpeedRaw = null,
+    ushort? ElevationSpeedRaw = null,
+    string? ModelToken = null,
+    string? XwModeToken = null,
+    string? TravelModeToken = null,
+    bool SawYuntaiSection = false,
+    bool SawIdentitySection = false);
