@@ -23,6 +23,38 @@ dotnet run --project src/DTrac.Nrl2.Simulator
 dotnet run --project examples/DTrac.Nrl2.Console -- --sim-query
 ```
 
+## LAN relay / UDP native Socket 7 (experimental)
+
+`DTrac.Nrl2.Relay.Nrl2LanRelay` can be hosted by your own application.
+It listens on an explicitly selected IPv4 interface and accepts only
+**allowlisted device IP + RotorID** pairs. A firmware Type2 packet registers
+its UDP endpoint; an APP Type5 packet is forwarded to the registered rotor,
+and a firmware Type5 reply returns to the corresponding APP SID endpoint.
+
+**This is an independently designed local routing profile, not verified
+compatibility with DTrac's production relay.** If the board requires a
+Type1 handshake or proprietary authentication, actual Socket7 operation
+still needs real capture and validation. UDP/60059 remains discovery only.
+Motion forwarding is **disabled by default**; manual enablement does not
+replace hardware stops. Never bind to an untrusted network.
+
+An offline loopback example:
+
+```csharp
+using System.Net;
+using DTrac.Nrl2.Relay;
+using var relay = new Nrl2LanRelay(
+    new IPEndPoint(IPAddress.Loopback, 19021),
+    new Dictionary<string, IPAddress> { ["123456789ABCDE"] = IPAddress.Loopback });
+await relay.RunAsync(cancellationToken);
+```
+
+The firmware also contains `AT+AZ_SPD=` / `AT+EL_SPD=`
+and hardware auto-ramping, **but these AT commands are a separate parser from
+GS-232 and have not been proven available on TCP/60020 or NRL2 Type5**.
+`Rc3040sFirmwareCommands` builds these commands for isolated testing
+but does not transmit or pretend the raw speed setting means degrees/s.
+
 ## LAN-only use (no DTrac relay needed)
 
 Firmware static analysis shows a separate, direct GS-232 TCP listener on port 60020.
