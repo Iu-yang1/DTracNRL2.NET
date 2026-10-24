@@ -46,6 +46,29 @@ public static class Rc3040sFirmwareCommands
     public static byte[] SetSubnetMask(IPAddress address) => Ipv4("AT+MASK=", address);
     public static byte[] SetDns(IPAddress address) => Ipv4("AT+DNS=", address);
 
+    /// <summary>
+    /// A six-character local/relay call-label. The firmware copies a maximum of
+    /// six nonterminator characters into XDATA 0x09E2 onward. This is NOT a
+    /// cryptographic callsign credential or a rotator RotorID.
+    /// </summary>
+    public static byte[] SetCallsign(string callsign)
+    {
+        ArgumentNullException.ThrowIfNull(callsign);
+        // This safe SDK subset avoids CR/LF injection and firmware buffer overflow;
+        // it does not assert the firmware rejects every other printable character.
+        if (callsign.Length is < 1 or > 6 ||
+            callsign.Any(c => c is not (>= 'A' and <= 'Z') and not (>= '0' and <= '9')))
+            throw new ArgumentException("Call-label must be 1..6 uppercase ASCII letters/digits.", nameof(callsign));
+        return Encoding.ASCII.GetBytes($"AT+CALL={callsign}\r");
+    }
+
+    /// <summary>
+    /// Raw one-byte SSID setting: three fixed decimal positions parsed via
+    /// 0x8E76 and stored at XDATA 0x09E1. Not a Wi-Fi SSID string.
+    /// </summary>
+    public static byte[] SetDeviceSsid(byte rawSsid) =>
+        Encoding.ASCII.GetBytes(FormattableString.Invariant($"AT+SSID={rawSsid:000}\r"));
+
     /// <summary>Firmware-recognized DHCP toggle; may persist configuration or disconnect the device.</summary>
     public static byte[] SetDhcp(bool enabled) =>
         Encoding.ASCII.GetBytes(enabled ? "AT+DHCP=ON\r" : "AT+DHCP=OFF\r");

@@ -171,3 +171,7 @@ The UDP→TCP gateway now ties the recent-C2 motion prerequisite to both APP SID
 ### Stage 9: fixed-width network configuration
 
 Firmware AT parser `0x8B2C→0x8E76` reads four 3-digit decimal IPv4 octets. The SDK now has opt-in, bytes-only `SetIpAddress`, `SetGateway`, `SetSubnetMask` and `SetDns` constructors, emitting e.g. `AT+IP=192.168.001.050\\r`. These may irreversibly change reachable device configuration. [Evidence](docs/reverse-engineering/RC3040S_stage9_IPv4_encoding.md).
+
+### Stage 10: bounded device identity AT settings
+
+Static firmware traces show `AT+CALL=` copies up to 6 characters to the device call-label slot, while `AT+SSID=` parses a 3-digit raw byte value (NOT a Wi-Fi network SSID). Opt-in byte-only builders `SetCallsign` and `SetDeviceSsid` now encode these settings. The `AT+D_IP=` suffix is copied to remote-host configuration, but its maximum bounds and response semantics remain unknown; the library deliberately does not provide an unverified arbitrary-length network setter. [Evidence](docs/reverse-engineering/RC3040S_stage10_CALL_SSID_D_IP.md).

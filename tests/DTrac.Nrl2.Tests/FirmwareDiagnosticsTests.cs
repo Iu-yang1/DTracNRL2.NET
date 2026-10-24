@@ -30,6 +30,22 @@ public sealed class FirmwareDiagnosticsTests
         Assert.False(Rc3040sDiagnosticParser.TryParseSpeedLine(line, out _));
 
     [Fact]
+    public void DeviceCallAndSsidConfigurationHaveBoundedFormats()
+    {
+        Assert.Equal("AT+CALL=BG5JSU\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetCallsign("BG5JSU")));
+        Assert.Equal("AT+CALL=TEST1\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetCallsign("TEST1")));
+        Assert.Equal("AT+SSID=000\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetDeviceSsid(0)));
+        Assert.Equal("AT+SSID=255\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetDeviceSsid(byte.MaxValue)));
+        Assert.Throws<ArgumentException>(() => Rc3040sFirmwareCommands.SetCallsign("ABCDEFG"));
+        Assert.Throws<ArgumentException>(() => Rc3040sFirmwareCommands.SetCallsign("ab12"));
+        Assert.Throws<ArgumentException>(() => Rc3040sFirmwareCommands.SetCallsign("A\rB"));
+    }
+
+    [Fact]
     public void IPv4FirmwareConfigUsesFixedThreeDigitOctets()
     {
         var address = IPAddress.Parse("192.168.1.50");
