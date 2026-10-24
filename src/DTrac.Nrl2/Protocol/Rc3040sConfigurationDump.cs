@@ -152,11 +152,14 @@ public static partial class Rc3040sConfigurationDump
             yuntaiHeader, identityHeader);
     }
 
-    private static bool TrySpeed(string value, out ushort raw) =>
-        value.Length == 5 &&
-        value.All(c => c is >= '0' and <= '9') &&
-        ushort.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out raw) &&
-        raw > 0;
+    private static bool TrySpeed(string value, out ushort raw)
+    {
+        raw = 0;
+        return value.Length == 5 &&
+            value.All(c => c is >= '0' and <= '9') &&
+            ushort.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out raw) &&
+            raw > 0;
+    }
 
     private static bool TryIp(string text, out IPAddress address) =>
         Rc3040sDiscovery.TryParseDecimalIpv4(text, out address);
