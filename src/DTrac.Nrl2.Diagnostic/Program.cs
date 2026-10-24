@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using DTrac.Nrl2.Discovery;
+using DTrac.Nrl2.Protocol;
 using DTrac.Nrl2.Transport;
 using System.Text.RegularExpressions;
 
@@ -37,7 +38,7 @@ internal static class Program
             return 0;
         }
 
-        Write("RC-3040S 局域网只读诊断 / LAN diagnostics v2");
+        Write("RC-3040S 局域网只读诊断 / LAN diagnostics v3");
         Write("无需 Git、Python、Visual Studio 或 .NET SDK。");
         Write("不会发送旋转、速度设置、复位或 EEPROM 写入命令。");
         Write("建议先暂停 SkyRoof 自动跟踪，避免竞争 TCP 连接。");
@@ -140,7 +141,7 @@ internal static class Program
             string? unsolicited = await ws.ReceiveTextAsync(TimeSpan.FromSeconds(2));
             Write(unsolicited is null
                 ? "[WebSocket/60030] 2 秒内无主动文本消息"
-                : "[WebSocket/60030] 主动消息: " + EscapeAndLimit(unsolicited, 512));
+                : "[WebSocket/60030] 主动消息: " + EscapeAndLimit(Rc3040sFirmwareBanner.RedactDeviceIds(unsolicited), 512));
         }
         catch (OperationCanceledException)
         {
@@ -188,9 +189,13 @@ internal static class Program
             // A lack of response does NOT disprove the management WebSocket protocol.
             await ws.SendTextAsync("C2\r", cancellationToken: cancel.Token);
             string? reply = await ws.ReceiveTextAsync(TimeSpan.FromSeconds(2), cancel.Token);
-            Write(reply is null
-                ? "[WebSocket/60030] C2 已发送，未收到文本答复"
-                : "[WebSocket/60030] C2 回复: " + EscapeAndLimit(reply, 512));
+            if (reply is null)
+                Write("[WebSocket/60030] C2 已发送，未收到文本答复");
+            else if (Rc3040sFirmwareBanner.TryParse(reply, out var banner))
+                Write($"[WebSocket/60030] 收到设备版本标识（不是角度）: {banner.VersionLabel} {banner.MaskedDeviceId}");
+            else
+                Write("[WebSocket/60030] C2 后收到文本（尚不能确认应答语义）: " +
+                    EscapeAndLimit(Rc3040sFirmwareBanner.RedactDeviceIds(reply), 512));
         }
         catch (Exception ex)
         {
@@ -225,7 +230,7 @@ internal static class Program
                 replies++;
                 bool parsed = Rc3040sDiscovery.TryParsePong(
                     response.Buffer, response.RemoteEndPoint.Address, out var rotor);
-                string raw = Encoding.ASCII.GetString(response.Buffer);
+                string raw = Rc3040sFirmwareBanner.RedactDeviceIds(Encoding.ASCII.GetString(response.Buffer));
                 // Don't inadvertently copy the full seven-byte device ID into logs.
                 raw = Regex.Replace(raw, @"(?i)(rotorid|id)\s*=\s*([0-9a-f]{14})",
                     match => match.Groups[1].Value + "=**********" + match.Groups[2].Value[^4..]);
