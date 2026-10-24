@@ -19,7 +19,12 @@ public static class Rc3040sFirmwareCommands
 
     private static byte[] Speed(string axis, ushort rawValue)
     {
-        if (rawValue == 0) throw new ArgumentOutOfRangeException(nameof(rawValue));
+        // The 251217 ROM computes floor(921600 / rawValue), then stores
+        // (65536 - count) into 16-bit timer reload registers. Values 0..14
+        // are not representable without division-by-zero / reload wraparound.
+        // This is only a numeric representation check, NOT a safe motor range.
+        if (rawValue < 15) throw new ArgumentOutOfRangeException(nameof(rawValue),
+            "Raw speed below 15 is not representable by the recovered 251217 timer formula.");
         // Firmware parser at 0x720E reads exactly five ASCII digit positions (+10..+14).
         // ushort prevents 16-bit wraparound, but this is NOT a calibrated mechanical speed range.
         // This command may persist EEPROM. Do not transmit without an independently verified management frame.

@@ -9,6 +9,8 @@ public sealed class FirmwareDiagnosticsTests
 {
     [Theory]
     [InlineData("AZ SPEED: 00300  HZ , 12.50 /s ", Rc3040sAxis.Azimuth, 300, 12.5)]
+    [InlineData("AZ SPEED: 05000  HZ , 4.98 °/s ", Rc3040sAxis.Azimuth, 5000, 4.98)]
+    [InlineData("EL SPEED: 05000  HZ , 5.51 °/s ", Rc3040sAxis.Elevation, 5000, 5.51)]
     [InlineData("EL SPEED: 65535  HZ , 0.25 /s", Rc3040sAxis.Elevation, 65535, 0.25)]
     [InlineData("az speed: 00001 HZ , .50 /s", Rc3040sAxis.Azimuth, 1, .5)]
     public void ParsesFirmwareSpeedDiagnosticButNeverAssumesDegreesPerSecond(
@@ -43,6 +45,25 @@ public sealed class FirmwareDiagnosticsTests
         Assert.Throws<ArgumentException>(() => Rc3040sFirmwareCommands.SetCallsign("ABCDEFG"));
         Assert.Throws<ArgumentException>(() => Rc3040sFirmwareCommands.SetCallsign("ab12"));
         Assert.Throws<ArgumentException>(() => Rc3040sFirmwareCommands.SetCallsign("A\rB"));
+    }
+
+    [Theory]
+    [InlineData((ushort)0)]
+    [InlineData((ushort)1)]
+    [InlineData((ushort)14)]
+    public void RejectsNonrepresentableLowRawSpeed(ushort raw)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Rc3040sFirmwareCommands.SetAzimuthSpeed(raw));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Rc3040sFirmwareCommands.SetElevationSpeed(raw));
+    }
+
+    [Fact]
+    public void AcceptsMinimumNumericallyRepresentableRawSpeedButDoesNotClaimMechanicalSafety()
+    {
+        Assert.Equal("AT+AZ_SPD=00015\r",
+            Encoding.ASCII.GetString(Rc3040sFirmwareCommands.SetAzimuthSpeed(15)));
     }
 
     [Fact]
