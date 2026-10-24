@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using DTrac.Nrl2.Discovery;
@@ -78,7 +79,7 @@ internal static class Program
         Write($"目标控制板 IP：{host}");
         Write($"开始时间：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
         Write("本次执行全部非破坏性协议测试；不再需要逐项确认。");
-        Write("仅发送 GS-232 C2 一次、WebSocket C2 两次、UDP 发现广播/单播各一次。");
+        Write("仅发送 GS-232 C2 一次、WebSocket C2 两次、UDP 全网广播/子网广播/单播各一次。");
         Write("");
 
         var overall = Stopwatch.StartNew();
@@ -200,8 +201,51 @@ internal static class Program
 
     private static async Task CheckDiscoveryAsync(IPAddress host)
     {
-        await DiscoverViaAsync(host, IPAddress.Broadcast, "broadcast");
+        await DiscoverViaAsync(host, IPAddress.Broadcast, "global-broadcast");
+        IPAddress? directed = TryFindDirectedBroadcast(host);
+        if (directed is not null && !directed.Equals(IPAddress.Broadcast) && !directed.Equals(host))
+            await DiscoverViaAsync(host, directed, "subnet-broadcast");
         await DiscoverViaAsync(host, host, "unicast");
+    }
+
+    /// <summary>
+    /// Finds the broadcast address only for an active IPv4 interface on the
+    /// same subnet as the selected controller, without guessing /24 masks.
+    /// Does not change any adapter or system setting.
+    /// </summary>
+    private static IPAddress? TryFindDirectedBroadcast(IPAddress device)
+    {
+        try
+        {
+            byte[] target = device.GetAddressBytes();
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up ||
+                    nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                foreach (var unicast in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (unicast.Address.AddressFamily != AddressFamily.InterNetwork ||
+                        unicast.IPv4Mask is null) continue;
+                    byte[] local = unicast.Address.GetAddressBytes();
+                    byte[] mask = unicast.IPv4Mask.GetAddressBytes();
+                    bool sameSubnet = true;
+                    for (int i = 0; i < 4; i++)
+                        if ((local[i] & mask[i]) != (target[i] & mask[i]))
+                            sameSubnet = false;
+                    if (!sameSubnet) continue;
+                    byte[] broadcast = new byte[4];
+                    for (int i = 0; i < 4; i++)
+                        broadcast[i] = (byte)((local[i] & mask[i]) | (255 ^ mask[i]));
+                    var address = new IPAddress(broadcast);
+                    Write($"[NET] 匹配本机接口 {unicast.Address}/{unicast.IPv4Mask}; 子网广播 {address}");
+                    return address;
+                }
+            }
+        }
+        catch (NetworkInformationException ex) { Write("[NET] 接口枚举失败: " + Compact(ex)); }
+        catch (SocketException ex) { Write("[NET] 接口枚举失败: " + Compact(ex)); }
+        Write("[NET] 没有找到同一子网的 IPv4 接口，跳过子网广播");
+        return null;
     }
 
     private static async Task DiscoverViaAsync(IPAddress host, IPAddress destination, string mode)
