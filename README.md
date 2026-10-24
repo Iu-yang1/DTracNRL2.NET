@@ -189,3 +189,14 @@ dotnet run --project src/DTrac.Nrl2.Host -- --observe-udp 192.168.1.100 60050
 ```
 
 Replace the sample LAN IP and select the destination UDP port confirmed for your firmware. This mode **only receives**, reports masked identifiers and directional length encoding, and does not automatically set D_IP or send any packets. [Read-only observation procedure](docs/reverse-engineering/RC3040S_passive_nrl2_observation.md).
+
+## Portable Windows diagnostic (no developer environment required)
+
+Users operating the RC-3040S from a dedicated ham-radio Windows PC can download the
+self-contained **RC3040S-Diagnostic-Windows-x64** Actions artifact, extract the
+single `.exe`, double-click, enter the controller IP and send back the Desktop TXT report.
+It needs no Git, .NET installation, Visual Studio or Python. It does **only** TCP connection
+checks, passive WebSocket status and one UDP discovery ping. It never sends motion or AT writes.
+
+**[中文图文步骤：免安装 Windows 诊断程序](docs/portable-diagnostic-zh-CN.md)**
+**[Download latest CI artifact](https://github.com/Iu-yang1/DTracNRL2.NET/actions/workflows/ci.yml)**
